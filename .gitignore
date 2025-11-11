@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Local data and docs (optional to keep repo light)
+data/*.csv
+data/*.geojson
+docs/**
+
+# OS
+.DS_Store
+Thumbs.db
+
