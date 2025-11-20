@@ -28,9 +28,22 @@ _APP_CSS = """
 /* Subtle professional styling */
 .metric-card {
   border: none;
-  border-radius: 12px;
-  padding: 10px 12px;
-  background: #F9FAFB;
+  border-radius: 8px;
+  padding: 0;
+  background: transparent;
+  min-height: 0;
+  display: block;
+}
+.metric-title {
+  font-size: 13px;
+  color: #374151;
+  margin-bottom: 6px;
+}
+.metric-value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #111827;
 }
 .legend-pill { display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; margin-right:6px; border:1px solid #e5e7eb; }
 .alert-banner { border-left: 4px solid #dc2626; padding: 8px 12px; background:#FEF2F2; }
@@ -171,7 +184,7 @@ def load_data() -> Dict[str, object]:
     random.seed(42)
     np.random.seed(42)
     # Align names to examples
-    sites = ["Luena", "1st May", "Kamwenyetulo"]
+    sites = ["Luxiha", "1st May", "Kamwenyetulo"]
     projects = ["Angola"]
     strata = ["Upland", "Lowland", "Riparian"]
     dataset_versions = ["v2025.10.01", "v2025.11.01"]
@@ -513,8 +526,8 @@ def _render_empty_message(message: str) -> None:
 def _kpi_card(title: str, value: str, help_text: Optional[str] = None, delta: Optional[str] = None) -> None:
     with st.container():
         st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-        st.markdown(f"**{title}**")
-        st.markdown(f"<div style='font-size:30px; font-weight:700; line-height:1.2'>{value}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-title'>{title}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-value'>{value}</div>", unsafe_allow_html=True)
         if help_text:
             st.caption(help_text)
         st.markdown("</div>", unsafe_allow_html=True)
@@ -740,45 +753,43 @@ def page_overview(data: Dict[str, object], flt: dict) -> None:
         st.caption("Note: CCB indicators are displayed as indices or percentages with explanatory notes.")
         return
 
-    col1, col2, col3 = st.columns(3)
-    col4, col5 = st.columns(2)
-    # Summary cards
+    # Summary cards (2 rows x 3 columns for symmetry)
+    row1 = st.columns(3)
+    row2 = st.columns(3)
+
     total_vcus = f"{mon['tco2e_this_period'].sum():,.0f} tCO₂e" if not mon.empty else "—"
     trees_af = f"{int(mon['agroforestry_trees_planted'].sum()):,}" if not mon.empty and 'agroforestry_trees_planted' in mon.columns else "—"
     trees_re = f"{int(mon['reforestation_trees_planted'].sum()):,}" if not mon.empty and 'reforestation_trees_planted' in mon.columns else "—"
-    hectares_reforested = f"{mon['hectares_reforested'].sum():,.1f}" if not mon.empty and 'hectares_reforested' in mon.columns else "—"
-    hectares_ag = f"{mon['hectares_ag_improved'].sum():,.1f}" if not mon.empty and 'hectares_ag_improved' in mon.columns else "—"
-    households = f"{int(mon['households_enrolled'].sum()):,}" if not mon.empty and 'households_enrolled' in mon.columns else "—"
-    with col1:
+    hectares_reforested = f"{mon['hectares_reforested'].sum():,.1f} ha" if not mon.empty and 'hectares_reforested' in mon.columns else "—"
+    hectares_ag = f"{mon['hectares_ag_improved'].sum():,.1f} ha" if not mon.empty and 'hectares_ag_improved' in mon.columns else "—"
+    hectares_af = f"{mon['hectares_agroforestry'].sum():,.1f} ha" if not mon.empty and 'hectares_agroforestry' in mon.columns else "—"
+
+    with row1[0]:
         _kpi_card("Total Verified Carbon Units (VCUs)", total_vcus)
-    with col2:
+    with row1[1]:
         _kpi_card("Agroforestry trees planted", trees_af)
-    with col3:
+    with row1[2]:
         _kpi_card("Reforestation trees planted", trees_re)
-    with col4:
+
+    with row2[0]:
         _kpi_card("Hectares reforested", hectares_reforested)
-    with col5:
-        _kpi_card("Area under improved land mgmt (ILM)", hectares_ag)
-    with st.container():
-        _kpi_card("Households enrolled", households)
+    with row2[1]:
+        _kpi_card("Area under IALM", hectares_ag)
+    with row2[2]:
+        _kpi_card("Area under agroforestry", hectares_af)
 
     st.markdown("### Cumulative sequestration vs baseline")
     if mon.empty:
         _render_empty_message("No monitoring data for the selected filters.")
     else:
         trend = mon.groupby(["date", "methodology"], as_index=False)[["tco2e_this_period", "uncertainty_percent"]].mean()
-        # Build shaded uncertainty bands
+        # Lines only (bands removed per feedback)
         import plotly.graph_objects as go
         fig = go.Figure()
         for meth, d in trend.groupby("methodology"):
             d = d.sort_values("date")
             y = d["tco2e_this_period"].values
             x = d["date"].values
-            u = d["uncertainty_percent"].values / 100.0
-            y_upper = y * (1 + u)
-            y_lower = y * (1 - u)
-            fig.add_trace(go.Scatter(x=x, y=y_upper, line=dict(width=0), showlegend=False, hoverinfo="skip"))
-            fig.add_trace(go.Scatter(x=x, y=y_lower, line=dict(width=0), fill="tonexty", name=f"{meth} band", hoverinfo="skip", fillcolor="rgba(59,130,246,0.15)"))
             fig.add_trace(go.Scatter(x=x, y=y, mode="lines+markers", name=meth))
             # Baseline reference (net baseline: AGB+BGB+SOC - emissions - leakage)
             base_m = base[base["methodology"] == meth]
@@ -791,7 +802,7 @@ def page_overview(data: Dict[str, object], flt: dict) -> None:
         st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("### Contributions and highlights")
-    pie_col1, pie_col2, pie_col3 = st.columns([1, 1, 2])
+    pie_col1, pie_col2, pie_col3, pie_col4 = st.columns([1, 1, 1, 2])
     with pie_col1:
         by_meth = mon.groupby("methodology", as_index=False)["tco2e_this_period"].sum()
         st.plotly_chart(px.pie(by_meth, names="methodology", values="tco2e_this_period", hole=0.5, title="% by methodology"), use_container_width=True)
@@ -802,6 +813,12 @@ def page_overview(data: Dict[str, object], flt: dict) -> None:
         else:
             st.plotly_chart(px.pie(pools, names="metric", values="value", hole=0.5, title="% by carbon pool (AGB, BGB, SOC)"), use_container_width=True)
     with pie_col3:
+        if mon.empty:
+            _render_empty_message("No stratum data for current selection.")
+        else:
+            by_stratum = mon.groupby("stratum", as_index=False)["tco2e_this_period"].sum()
+            st.plotly_chart(px.pie(by_stratum, names="stratum", values="tco2e_this_period", hole=0.5, title="% by stratum"), use_container_width=True)
+    with pie_col4:
         # Top sites by cumulative (latest available)
         latest = mon.sort_values("date").groupby(["site"], as_index=False).last()[["site", "cumulative_tco2e"]]
         if latest.empty or "cumulative_tco2e" not in latest.columns:
