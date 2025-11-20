@@ -584,20 +584,27 @@ def page_baseline(data: Dict[str, object], flt: dict) -> None:
         v_leak, _ = metric_value(LEAKAGE_METRIC)
 
         with col1:
-            _kpi_card("AGB VCUs", f"{v_agb:,.0f} tCO₂e", help_text=f"+ {u_agb:.1f}%")
+            _kpi_card("AGB VCUs", f"{v_agb:,.0f} VCUs", help_text=f"+ {u_agb:.1f}%")
         with col2:
-            _kpi_card("BGB VCUs", f"{v_bgb:,.0f} tCO₂e", help_text=f"+ {u_bgb:.1f}%")
+            _kpi_card("BGB VCUs", f"{v_bgb:,.0f} VCUs", help_text=f"+ {u_bgb:.1f}%")
         with col3:
-            _kpi_card("SOC VCUs", f"{v_soc:,.0f} tCO₂e", help_text=f"+ {u_soc:.1f}%")
+            _kpi_card("SOC VCUs", f"{v_soc:,.0f} VCUs", help_text=f"+ {u_soc:.1f}%")
 
         col4, col5, col6 = st.columns(3)
         with col4:
-            _kpi_card("Leakage", f"{v_leak:,.0f} tCO₂e")
+            _kpi_card("Leakage", f"-{v_leak:,.0f} VCUs")
         with col5:
-            _kpi_card("Emissions — Fossil fuels", f"{v_foss:,.0f} tCO₂e", help_text=f"+ {u_foss:.1f}%")
+            _kpi_card("Emissions — Fossil fuels", f"-{v_foss:,.0f} VCUs", help_text=f"+ {u_foss:.1f}%")
         with col6:
-            _kpi_card("Emissions — Biomass burning", f"{v_burn:,.0f} tCO₂e", help_text=f"+ {u_burn:.1f}%")
-        _kpi_card("Emissions — Nitrogen inputs", f"{v_nit:,.0f} tCO₂e", help_text=f"+ {u_nit:.1f}%")
+            _kpi_card("Emissions — Biomass burning", f"-{v_burn:,.0f} VCUs", help_text=f"+ {u_burn:.1f}%")
+
+        row3 = st.columns(3)
+        with row3[0]:
+            _kpi_card("Emissions — Nitrogen inputs", f"-{v_nit:,.0f} VCUs", help_text=f"+ {u_nit:.1f}%")
+        # Net baseline = sinks (AGB+BGB+SOC) - sources (emissions + leakage)
+        net_baseline = (v_agb + v_bgb + v_soc) - (v_foss + v_burn + v_nit + v_leak)
+        with row3[1]:
+            _kpi_card("Net baseline VCUs", f"{net_baseline:,.0f} VCUs")
 
         # Charts: Baseline components by grouping
         group_by = "site"
@@ -855,17 +862,29 @@ def page_overview(data: Dict[str, object], flt: dict) -> None:
     with t1:
         st.markdown("#### Verified Carbon Units (VM0042)")
         vm42_base = base[base["methodology"] == "VM0042"]
-        vm42_biomass = vm42_base[vm42_base["metric"] == "Biomass (tCO2e)"]["value"].sum()
+        vm42_agb = vm42_base[vm42_base["metric"] == "Aboveground biomass (AGB) (tCO2e)"]["value"].sum()
+        vm42_bgb = vm42_base[vm42_base["metric"] == "Belowground biomass (BGB) (tCO2e)"]["value"].sum()
         vm42_soc = vm42_base[vm42_base["metric"] == "Soil organic carbon (tCO2e)"]["value"].sum()
-        vm42_total = vm42_biomass + vm42_soc
-        st.table(pd.DataFrame({"Metric": ["Biomass", "Soil Organic Carbon", "Total"], "Value (tCO₂e)": [vm42_biomass, vm42_soc, vm42_total]}))
+        vm42_total = vm42_agb + vm42_bgb + vm42_soc
+        df_vm42 = pd.DataFrame({
+            "Metric": ["Aboveground biomass (AGB)", "Belowground biomass (BGB)", "Soil Organic Carbon (SOC)", "Total"],
+            "Value (tCO₂e)": [vm42_agb, vm42_bgb, vm42_soc, vm42_total],
+        })
+        df_vm42["Value (tCO₂e)"] = df_vm42["Value (tCO₂e)"].map(lambda x: f"{x:,.2f}")
+        st.table(df_vm42)
     with t2:
         st.markdown("#### Verified Carbon Units (VM0047)")
         vm47_base = base[base["methodology"] == "VM0047"]
-        vm47_biomass = vm47_base[vm47_base["metric"] == "Biomass (tCO2e)"]["value"].sum()
+        vm47_agb = vm47_base[vm47_base["metric"] == "Aboveground biomass (AGB) (tCO2e)"]["value"].sum()
+        vm47_bgb = vm47_base[vm47_base["metric"] == "Belowground biomass (BGB) (tCO2e)"]["value"].sum()
         vm47_soc = vm47_base[vm47_base["metric"] == "Soil organic carbon (tCO2e)"]["value"].sum()
-        vm47_total = vm47_biomass + vm47_soc
-        st.table(pd.DataFrame({"Metric": ["Biomass", "Soil Organic Carbon", "Total"], "Value (tCO₂e)": [vm47_biomass, vm47_soc, vm47_total]}))
+        vm47_total = vm47_agb + vm47_bgb + vm47_soc
+        df_vm47 = pd.DataFrame({
+            "Metric": ["Aboveground biomass (AGB)", "Belowground biomass (BGB)", "Soil Organic Carbon (SOC)", "Total"],
+            "Value (tCO₂e)": [vm47_agb, vm47_bgb, vm47_soc, vm47_total],
+        })
+        df_vm47["Value (tCO₂e)"] = df_vm47["Value (tCO₂e)"].map(lambda x: f"{x:,.2f}")
+        st.table(df_vm47)
 
     st.markdown("### Dataset metadata")
     st.info(
