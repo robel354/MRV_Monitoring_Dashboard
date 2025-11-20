@@ -42,16 +42,18 @@ st.markdown(f"<style>{_APP_CSS}</style>", unsafe_allow_html=True)
 
 
 # ---------- Types & Constants ----------
-METHODOLOGIES = ["VM0042", "VM0047"]
+METHODOLOGIES = ["VM0042", "VM0047", "CCB"]
 VM0042_BASELINE_METRICS = [
-    "Biomass (tCO2e)",
+    "Aboveground biomass (AGB) (tCO2e)",
+    "Belowground biomass (BGB) (tCO2e)",
     "Soil organic carbon (tCO2e)",
     "GHG Emissions — Fossil fuels (tCO2e)",
     "GHG Emissions — Biomass Burning (tCO2e)",
     "GHG Emissions — Nitrogen inputs to Soils (tCO2e)",
 ]
 VM0047_BASELINE_METRICS = [
-    "Biomass (tCO2e)",
+    "Aboveground biomass (AGB) (tCO2e)",
+    "Belowground biomass (BGB) (tCO2e)",
     "Soil organic carbon (tCO2e)",
     "GHG Emissions — Fossil fuels (tCO2e)",
     "GHG Emissions — Biomass Burning (tCO2e)",
@@ -205,13 +207,13 @@ def load_data() -> Dict[str, object]:
                             "uncertainty_percent": round(uncert, 2),
                             "sampling_uncertainty_percent": round(samp_uncert, 2),
                             "sample_count": int(np.random.randint(20, 90)),
-                            "benchmark_fraction": benchmark_fraction if (methodology == "VM0047" and metric == "Biomass (tCO2e)") else np.nan,
+                            "benchmark_fraction": benchmark_fraction if (methodology == "VM0047" and metric == "Aboveground biomass (AGB) (tCO2e)") else np.nan,
                         })
 
     baseline_df = pd.DataFrame(baseline_rows)
 
     # Monitoring records across four periods
-    periods = ["2025Q1", "2025Q2", "2025Q3", "2025Q4"]
+    periods = ["2025T0", "2025T1", "2025T2", "2025T3"]
     monitoring_rows: List[dict] = []
     for methodology in METHODOLOGIES:
         for version in dataset_versions:
@@ -234,16 +236,40 @@ def load_data() -> Dict[str, object]:
                             "cumulative_tco2e": round(cumulative, 2),
                             "uncertainty_percent": round(uncert, 2),
                             "trees_planted": int(np.random.randint(1000, 6000)),
+                            "agroforestry_trees_planted": int(np.random.randint(500, 3000)),
+                            "reforestation_trees_planted": int(np.random.randint(500, 3000)),
                             "species_count": int(np.random.randint(5, 25)),
                             "plots_measured": int(np.random.randint(20, 90)),
                             "hectares_reforested": float(np.random.uniform(5, 120)),
                             "hectares_ag_improved": float(np.random.uniform(10, 200)),
+                            "hectares_agroforestry": float(np.random.uniform(5, 150)),
                             "households_enrolled": int(np.random.randint(30, 600)),
-                            "project_area_instances": int(np.random.randint(1, 12)),
                             "run_id": f"RUN-{period}-{random.randint(100,999)}",
                         })
 
     monitoring_df = pd.DataFrame(monitoring_rows)
+
+    # Species breakdown (synthetic) for AF and RE trees
+    species_catalog = {
+        "Agroforestry": ["Faidherbia albida", "Grevillea robusta", "Acacia spp.", "Moringa oleifera"],
+        "Reforestation": ["Eucalyptus spp.", "Pinus spp.", "Miombo spp.", "Terminalia sericea"],
+    }
+    species_rows: List[dict] = []
+    for version in dataset_versions:
+        for site in sites:
+            for stratum in strata:
+                for category, sp_list in species_catalog.items():
+                    for sp in sp_list:
+                        species_rows.append({
+                            "project": "Angola",
+                            "dataset_version": version,
+                            "site": site,
+                            "stratum": stratum,
+                            "category": category,  # Agroforestry or Reforestation
+                            "species": sp,
+                            "trees_planted": int(np.random.randint(100, 2000)),
+                        })
+    species_df = pd.DataFrame(species_rows)
 
     # QC summary
     qc_rows: List[dict] = []
@@ -379,6 +405,7 @@ def load_data() -> Dict[str, object]:
     return {
         "baseline": baseline_df,
         "monitoring": monitoring_df,
+        "species": species_df,
         "qc": qc_df,
         "plots_geojson": plots_geojson,
         "boundaries_geojson": boundaries_geojson,
@@ -535,7 +562,8 @@ def page_baseline(data: Dict[str, object], flt: dict) -> None:
             return float(subset["value"].sum()), float(subset["uncertainty_percent"].mean()) if not subset.empty else (0.0, float("nan"))  # type: ignore
 
         col1, col2, col3 = st.columns(3)
-        v_bio, u_bio = metric_value("Biomass (tCO2e)")
+        v_agb, u_agb = metric_value("Aboveground biomass (AGB) (tCO2e)")
+        v_bgb, u_bgb = metric_value("Belowground biomass (BGB) (tCO2e)")
         v_soc, u_soc = metric_value("Soil organic carbon (tCO2e)")
         v_foss, u_foss = metric_value("GHG Emissions — Fossil fuels (tCO2e)")
         v_burn, u_burn = metric_value("GHG Emissions — Biomass Burning (tCO2e)")
@@ -543,47 +571,57 @@ def page_baseline(data: Dict[str, object], flt: dict) -> None:
         v_leak, _ = metric_value(LEAKAGE_METRIC)
 
         with col1:
-            _kpi_card("Biomass VCUs", f"{v_bio:,.0f} tCO₂e", help_text=f"± {u_bio:.1f}%")
+            _kpi_card("AGB VCUs", f"{v_agb:,.0f} tCO₂e", help_text=f"+ {u_agb:.1f}%")
         with col2:
-            _kpi_card("SOC VCUs", f"{v_soc:,.0f} tCO₂e", help_text=f"± {u_soc:.1f}%")
+            _kpi_card("BGB VCUs", f"{v_bgb:,.0f} tCO₂e", help_text=f"+ {u_bgb:.1f}%")
         with col3:
-            _kpi_card("Leakage", f"{v_leak:,.0f} tCO₂e")
+            _kpi_card("SOC VCUs", f"{v_soc:,.0f} tCO₂e", help_text=f"+ {u_soc:.1f}%")
 
         col4, col5, col6 = st.columns(3)
         with col4:
-            _kpi_card("Emissions — Fossil fuels", f"{v_foss:,.0f} tCO₂e", help_text=f"± {u_foss:.1f}%")
+            _kpi_card("Leakage", f"{v_leak:,.0f} tCO₂e")
         with col5:
-            _kpi_card("Emissions — Biomass burning", f"{v_burn:,.0f} tCO₂e", help_text=f"± {u_burn:.1f}%")
+            _kpi_card("Emissions — Fossil fuels", f"{v_foss:,.0f} tCO₂e", help_text=f"+ {u_foss:.1f}%")
         with col6:
-            _kpi_card("Emissions — Nitrogen inputs", f"{v_nit:,.0f} tCO₂e", help_text=f"± {u_nit:.1f}%")
+            _kpi_card("Emissions — Biomass burning", f"{v_burn:,.0f} tCO₂e", help_text=f"+ {u_burn:.1f}%")
+        _kpi_card("Emissions — Nitrogen inputs", f"{v_nit:,.0f} tCO₂e", help_text=f"+ {u_nit:.1f}%")
 
         # Charts: Baseline components by grouping
-        group_by = st.radio("Group by", ["site", "stratum"], horizontal=True, key=f"group_by_{methodology}")
-        comp_keep = ["Biomass (tCO2e)", "Soil organic carbon (tCO2e)"] + EMISSIONS_METRICS + [LEAKAGE_METRIC]
+        group_by = "site"
+        comp_keep = ["Aboveground biomass (AGB) (tCO2e)", "Belowground biomass (BGB) (tCO2e)", "Soil organic carbon (tCO2e)"] + EMISSIONS_METRICS + [LEAKAGE_METRIC]
         comp = df[df["metric"].isin(comp_keep)].groupby([group_by, "metric"], as_index=False)["value"].sum()
-        fig = px.bar(comp, x=group_by, y="value", color="metric", barmode="group", labels={"value": "tCO₂e"})
+        fig = px.bar(comp, x=group_by, y="value", color="metric", barmode="group", labels={"value": "tCO₂e (VCUs)"})
         fig.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), legend_title_text="Component")
         st.plotly_chart(fig, use_container_width=True)
 
         # Net GHG balance with positive/negative bars
-        sign_map = {m: 1 for m in ["Biomass (tCO2e)", "Soil organic carbon (tCO2e)"]}
+        sign_map = {m: 1 for m in ["Aboveground biomass (AGB) (tCO2e)", "Belowground biomass (BGB) (tCO2e)", "Soil organic carbon (tCO2e)"]}
         sign_map.update({m: -1 for m in EMISSIONS_METRICS + [LEAKAGE_METRIC]})
         comp["signed_value"] = comp.apply(lambda r: r["value"] * sign_map.get(r["metric"], 1), axis=1)
-        fign = px.bar(comp, x=group_by, y="signed_value", color="metric", barmode="relative", labels={"signed_value": "Net tCO₂e"})
+        # Add a net bar per site (avoid duplicate 'value' column names)
+        net = comp.groupby(group_by, as_index=False)["signed_value"].sum().rename(columns={"signed_value": "value"}).assign(metric="Net")
+        comp_signed = comp[[group_by, "metric", "signed_value"]].rename(columns={"signed_value": "value"})
+        comp_net = pd.concat([comp_signed, net[[group_by, "metric", "value"]]], ignore_index=True)
+        fign = px.bar(comp_net, x=group_by, y="value", color="metric", barmode="relative", labels={"value": "Net tCO₂e (VCUs)"})
         fign.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), legend_title_text="Component")
         st.plotly_chart(fign, use_container_width=True)
 
         # Tables
         st.markdown("#### Table 1 — Baseline carbon stocks")
-        t1 = df[df["metric"].isin(["Biomass (tCO2e)", "Soil organic carbon (tCO2e)"])][
+        # Table filters
+        sites_sel = st.multiselect("Filter sites", sorted(df["site"].unique().tolist()), default=sorted(df["site"].unique().tolist()), key=f"t1_sites_{methodology}")
+        strata_sel = st.multiselect("Filter strata", sorted(df["stratum"].unique().tolist()), default=sorted(df["stratum"].unique().tolist()), key=f"t1_strata_{methodology}")
+        pools_sel = st.multiselect("Filter pools", ["Aboveground biomass (AGB) (tCO2e)", "Belowground biomass (BGB) (tCO2e)", "Soil organic carbon (tCO2e)"], default=["Aboveground biomass (AGB) (tCO2e)", "Belowground biomass (BGB) (tCO2e)", "Soil organic carbon (tCO2e)"], key=f"t1_pools_{methodology}")
+        t1 = df[(df["site"].isin(sites_sel)) & (df["stratum"].isin(strata_sel)) & (df["metric"].isin(pools_sel))][
             ["site", "stratum", "metric", "value", "uncertainty_percent", "sample_count"]
-        ].rename(columns={"metric": "Carbon pool", "value": "Value (tCO₂e)", "uncertainty_percent": "Uncertainty (%)"})
+        ].rename(columns={"metric": "Carbon pool", "value": "Value (tCO₂e / VCUs)", "uncertainty_percent": "Uncertainty (+%)"})
         st.dataframe(t1.sort_values(["site", "stratum", "Carbon pool"]), use_container_width=True)
 
         st.markdown("#### Table 2 — Project emissions and leakage")
-        t2 = df[df["metric"].isin(EMISSIONS_METRICS + [LEAKAGE_METRIC])][
+        sources_sel = st.multiselect("Filter sources", EMISSIONS_METRICS + [LEAKAGE_METRIC], default=EMISSIONS_METRICS + [LEAKAGE_METRIC], key=f"t2_sources_{methodology}")
+        t2 = df[(df["site"].isin(sites_sel)) & (df["stratum"].isin(strata_sel)) & (df["metric"].isin(sources_sel))][
             ["site", "stratum", "metric", "value", "uncertainty_percent", "sample_count"]
-        ].rename(columns={"metric": "Emission source", "value": "Value (tCO₂e)", "uncertainty_percent": "Uncertainty (%)"})
+        ].rename(columns={"metric": "Emission source", "value": "Value (tCO₂e / VCUs)", "uncertainty_percent": "Uncertainty (+%)"})
         st.dataframe(t2.sort_values(["site", "stratum", "Emission source"]), use_container_width=True)
 
     with tab1:
@@ -603,10 +641,10 @@ def page_baseline(data: Dict[str, object], flt: dict) -> None:
 
             # VM0047 net with benchmark deduction visual (approximate)
             group_by = st.radio("Group by (VM0047)", ["site", "stratum"], horizontal=True, key="group_by_vm0047")
-            comp = df47[df47["metric"].isin(["Biomass (tCO2e)", "Soil organic carbon (tCO2e)"] + EMISSIONS_METRICS + [LEAKAGE_METRIC])]
+            comp = df47[df47["metric"].isin(["Aboveground biomass (AGB) (tCO2e)", "Belowground biomass (BGB) (tCO2e)", "Soil organic carbon (tCO2e)"] + EMISSIONS_METRICS + [LEAKAGE_METRIC])]
             comp = comp.groupby([group_by, "metric"], as_index=False).agg(value=("value", "sum"), benchmark_fraction=("benchmark_fraction", "mean"))
             # Split biomass into retained and deduction parts
-            bio = comp[comp["metric"] == "Biomass (tCO2e)"].copy()
+            bio = comp[comp["metric"] == "Aboveground biomass (AGB) (tCO2e)"].copy()
             bio["biomass_retained"] = bio["value"] * bio["benchmark_fraction"].fillna(1.0)
             bio["biomass_deduction"] = bio["value"] - bio["biomass_retained"]
             # Assemble long format
@@ -673,26 +711,55 @@ def page_overview(data: Dict[str, object], flt: dict) -> None:
 
     base = _apply_common_filters(baseline_df, flt)
 
+    # If user selects only CCB, show CCB overview
+    if flt.get("methodologies") == ["CCB"]:
+        st.markdown("### CCB Overview")
+        rng = np.random.default_rng(42)
+        sites = flt.get("sites", [])
+        def ccb_rows(indicators):
+            rows = []
+            for site in sites:
+                for name, unit, mean, std in indicators:
+                    val = float(np.clip(rng.normal(mean, std), 0, None))
+                    rows.append({"Site": site, "Indicator": name, "Value": round(val, 2), "Unit": unit})
+            return pd.DataFrame(rows)
+        inds = [
+            ("Species richness index", "index (0–1)", 0.6, 0.1),
+            ("Native vegetation cover", "%", 65, 10),
+            ("Habitat condition index", "index (0–1)", 0.6, 0.1),
+        ]
+        cdf = ccb_rows(inds)
+        # Tooltips/explanations
+        st.info("Indicator notes: Species richness and habitat condition are indices (0–1). Native vegetation cover is percentage area with native vegetation.")
+        # KPIs
+        c1, c2, c3 = st.columns(3)
+        with c1: _kpi_card("Species richness (mean)", f"{cdf[cdf['Indicator']=='Species richness index']['Value'].mean():.2f}")
+        with c2: _kpi_card("Native vegetation cover (mean)", f"{cdf[cdf['Indicator']=='Native vegetation cover']['Value'].mean():.1f}%")
+        with c3: _kpi_card("Habitat condition (mean)", f"{cdf[cdf['Indicator']=='Habitat condition index']['Value'].mean():.2f}")
+        st.dataframe(cdf, use_container_width=True)
+        st.caption("Note: CCB indicators are displayed as indices or percentages with explanatory notes.")
+        return
+
     col1, col2, col3 = st.columns(3)
-    col4, col5, col6 = st.columns(3)
+    col4, col5 = st.columns(2)
     # Summary cards
     total_vcus = f"{mon['tco2e_this_period'].sum():,.0f} tCO₂e" if not mon.empty else "—"
-    trees = f"{int(mon['trees_planted'].sum()):,}" if not mon.empty else "—"
+    trees_af = f"{int(mon['agroforestry_trees_planted'].sum()):,}" if not mon.empty and 'agroforestry_trees_planted' in mon.columns else "—"
+    trees_re = f"{int(mon['reforestation_trees_planted'].sum()):,}" if not mon.empty and 'reforestation_trees_planted' in mon.columns else "—"
     hectares_reforested = f"{mon['hectares_reforested'].sum():,.1f}" if not mon.empty and 'hectares_reforested' in mon.columns else "—"
     hectares_ag = f"{mon['hectares_ag_improved'].sum():,.1f}" if not mon.empty and 'hectares_ag_improved' in mon.columns else "—"
-    area_instances = f"{int(mon['project_area_instances'].sum()):,}" if not mon.empty and 'project_area_instances' in mon.columns else "—"
     households = f"{int(mon['households_enrolled'].sum()):,}" if not mon.empty and 'households_enrolled' in mon.columns else "—"
     with col1:
         _kpi_card("Total Verified Carbon Units (VCUs)", total_vcus)
     with col2:
-        _kpi_card("Number of trees planted", trees)
+        _kpi_card("Agroforestry trees planted", trees_af)
     with col3:
-        _kpi_card("Hectares reforested", hectares_reforested)
+        _kpi_card("Reforestation trees planted", trees_re)
     with col4:
-        _kpi_card("Hectares under improved ag. mgmt", hectares_ag)
+        _kpi_card("Hectares reforested", hectares_reforested)
     with col5:
-        _kpi_card("Project area instances", area_instances)
-    with col6:
+        _kpi_card("Area under improved land mgmt (ILM)", hectares_ag)
+    with st.container():
         _kpi_card("Households enrolled", households)
 
     st.markdown("### Cumulative sequestration vs baseline")
@@ -713,6 +780,13 @@ def page_overview(data: Dict[str, object], flt: dict) -> None:
             fig.add_trace(go.Scatter(x=x, y=y_upper, line=dict(width=0), showlegend=False, hoverinfo="skip"))
             fig.add_trace(go.Scatter(x=x, y=y_lower, line=dict(width=0), fill="tonexty", name=f"{meth} band", hoverinfo="skip", fillcolor="rgba(59,130,246,0.15)"))
             fig.add_trace(go.Scatter(x=x, y=y, mode="lines+markers", name=meth))
+            # Baseline reference (net baseline: AGB+BGB+SOC - emissions - leakage)
+            base_m = base[base["methodology"] == meth]
+            pos = base_m[base_m["metric"].isin(["Aboveground biomass (AGB) (tCO2e)", "Belowground biomass (BGB) (tCO2e)", "Soil organic carbon (tCO2e)"])]["value"].sum()
+            neg = base_m[base_m["metric"].isin(EMISSIONS_METRICS + [LEAKAGE_METRIC])]["value"].sum()
+            net_baseline = pos - neg
+            if len(x):
+                fig.add_trace(go.Scatter(x=[x[0], x[-1]], y=[net_baseline, net_baseline], mode="lines", name=f"{meth} baseline", line=dict(dash="dash")))
         fig.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="tCO₂e", xaxis_title="Date")
         st.plotly_chart(fig, use_container_width=True)
 
@@ -722,11 +796,11 @@ def page_overview(data: Dict[str, object], flt: dict) -> None:
         by_meth = mon.groupby("methodology", as_index=False)["tco2e_this_period"].sum()
         st.plotly_chart(px.pie(by_meth, names="methodology", values="tco2e_this_period", hole=0.5, title="% by methodology"), use_container_width=True)
     with pie_col2:
-        pools = base[base["metric"].isin(["Biomass (tCO2e)", "Soil organic carbon (tCO2e)"])].groupby("metric", as_index=False)["value"].sum()
+        pools = base[base["metric"].isin(["Aboveground biomass (AGB) (tCO2e)", "Belowground biomass (BGB) (tCO2e)", "Soil organic carbon (tCO2e)"])].groupby("metric", as_index=False)["value"].sum()
         if pools.empty:
             _render_empty_message("No pool data for current selection.")
         else:
-            st.plotly_chart(px.pie(pools, names="metric", values="value", hole=0.5, title="% by carbon pool"), use_container_width=True)
+            st.plotly_chart(px.pie(pools, names="metric", values="value", hole=0.5, title="% by carbon pool (AGB, BGB, SOC)"), use_container_width=True)
     with pie_col3:
         # Top sites by cumulative (latest available)
         latest = mon.sort_values("date").groupby(["site"], as_index=False).last()[["site", "cumulative_tco2e"]]
@@ -737,7 +811,29 @@ def page_overview(data: Dict[str, object], flt: dict) -> None:
             st.markdown("#### Top sites by cumulative tCO₂e")
             st.dataframe(top_sites.rename(columns={"cumulative_tco2e": "Cumulative tCO₂e"}), use_container_width=True)
 
+    st.markdown("### Trees per species")
+    species_df = data.get("species", pd.DataFrame())
+    if species_df.empty:
+        _render_empty_message("No species data available.")
+    else:
+        # Filter species by current project/version/sites
+        sdf = species_df.copy()
+        if "project" in sdf.columns:
+            sdf = sdf[sdf["project"] == flt["project"]]
+        if flt.get("sites"):
+            sdf = sdf[sdf["site"].isin(flt["sites"])]
+        tabs_sp = st.tabs(["Agroforestry", "Reforestation"])
+        with tabs_sp[0]:
+            af = sdf[sdf["category"] == "Agroforestry"].groupby("species", as_index=False)["trees_planted"].sum().sort_values("trees_planted", ascending=False)
+            st.plotly_chart(px.bar(af, x="species", y="trees_planted", title="Agroforestry: Trees per species"), use_container_width=True)
+            st.dataframe(af, use_container_width=True)
+        with tabs_sp[1]:
+            re = sdf[sdf["category"] == "Reforestation"].groupby("species", as_index=False)["trees_planted"].sum().sort_values("trees_planted", ascending=False)
+            st.plotly_chart(px.bar(re, x="species", y="trees_planted", title="Reforestation: Trees per species"), use_container_width=True)
+            st.dataframe(re, use_container_width=True)
+
     st.markdown("### Verified Carbon Units tables")
+    st.caption("Note: 1 VCU = 1 tCO₂e")
     t1, t2 = st.columns(2)
     with t1:
         st.markdown("#### Verified Carbon Units (VM0042)")
@@ -773,6 +869,28 @@ def page_monitoring_comparison(data: Dict[str, object], flt: dict) -> None:
     if flt["periods"]:
         mon = mon[mon["period"].isin(flt["periods"])].copy()
 
+    # If CCB selected, show indicator trends
+    if flt.get("methodologies") == ["CCB"]:
+        st.markdown("### CCB indicators over time")
+        periods_sorted = sorted(mon["period"].dropna().unique().tolist()) if not mon.empty else ["Time 1", "Time 2", "Time 3"]
+        # Synthetic trends per indicator
+        rng = np.random.default_rng(24)
+        df_ccb = pd.DataFrame({
+            "period": np.repeat(periods_sorted, 3),
+            "indicator": ["Species richness index", "Native vegetation cover", "Habitat condition index"] * len(periods_sorted),
+            "value": np.concatenate([
+                np.clip(rng.normal(0.6, 0.05, len(periods_sorted)), 0, 1),
+                np.clip(rng.normal(65, 5, len(periods_sorted)), 0, 100),
+                np.clip(rng.normal(0.6, 0.05, len(periods_sorted)), 0, 1),
+            ]),
+            "unit": ["index (0–1)"] * len(periods_sorted) + ["%"] * len(periods_sorted) + ["index (0–1)"] * len(periods_sorted),
+        })
+        fig_ccb = px.line(df_ccb, x="period", y="value", color="indicator", markers=True)
+        fig_ccb.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(fig_ccb, use_container_width=True)
+        st.caption("Notes: Species richness and habitat condition are index scores (0–1). Native vegetation cover is percentage cover.")
+        return
+
     if mon.empty:
         _render_empty_message("No monitoring data for selected filters.")
         return
@@ -806,9 +924,14 @@ def page_monitoring_comparison(data: Dict[str, object], flt: dict) -> None:
         fig3.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=10))
         st.plotly_chart(fig3, use_container_width=True)
     with cols[1]:
-        counts = mon.groupby("period", as_index=False)[["trees_planted", "plots_measured"]].sum()
-        counts = counts.melt("period", var_name="metric", value_name="count")
-        fig4 = px.bar(counts, x="period", y="count", color="metric", barmode="group")
+        # Uncertainty by carbon pool (synthetic allocation from overall monitoring uncertainty)
+        pools = ["Aboveground biomass (AGB) (tCO2e)", "Belowground biomass (BGB) (tCO2e)", "Soil organic carbon (tCO2e)"]
+        up = []
+        for _, row in mon.iterrows():
+            for p in pools:
+                up.append({"period": row["period"], "methodology": row["methodology"], "pool": p, "uncertainty_percent": row["uncertainty_percent"]})
+        up_df = pd.DataFrame(up)
+        fig4 = px.box(up_df, x="period", y="uncertainty_percent", color="pool", points=False, title="Uncertainty by carbon pool")
         fig4.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=10))
         st.plotly_chart(fig4, use_container_width=True)
 
@@ -1110,6 +1233,25 @@ def page_downloads(data: Dict[str, object], flt: dict) -> None:
     qc = data["qc"].copy()
     qc = qc[(qc["methodology"].isin(flt["methodologies"])) & (qc["dataset_version"] == flt["dataset_version"])].copy()
 
+    st.markdown("#### Raw datasets")
+    colA, colB = st.columns(2)
+    with colA:
+        st.download_button("Download baseline (CSV)", data=_to_csv_bytes(base), file_name="baseline_filtered.csv", mime="text/csv", disabled=base.empty)
+    with colB:
+        st.download_button("Download monitoring (CSV)", data=_to_csv_bytes(mon), file_name="monitoring_filtered.csv", mime="text/csv", disabled=mon.empty)
+
+    st.markdown("#### Previous versions")
+    # Allow export for any dataset version, not only current filters
+    all_versions = sorted(data["baseline"]["dataset_version"].dropna().unique().tolist())
+    sel_ver = st.selectbox("Choose dataset version to export", all_versions, index=max(0, len(all_versions) - 1))
+    base_ver = data["baseline"][data["baseline"]["dataset_version"] == sel_ver]
+    mon_ver = data["monitoring"][data["monitoring"]["dataset_version"] == sel_ver]
+    files_prev = [
+        (f"baseline_{sel_ver}.csv", _to_csv_bytes(base_ver)),
+        (f"monitoring_{sel_ver}.csv", _to_csv_bytes(mon_ver)),
+    ]
+    st.download_button("Download selected version (ZIP)", data=_zip_bytes(files_prev), file_name=f"datasets_{sel_ver}.zip", mime="application/zip")
+
     st.markdown("#### Indicator summary – KPIs by period, stratum, methodology and dataset")
     if mon.empty:
         _render_empty_message("No monitoring data to export.")
@@ -1171,12 +1313,7 @@ PAGES = {
     "Baseline": page_baseline,
     "Monitoring": page_monitoring_comparison,
     "Map": page_map,
-    "Data Explorer": page_data_explorer,
-    "QC Status": page_qc_status,
-    "Version History / Audit": page_version_history,
-    "Verification Dashboard": page_verification_dashboard,
     "Downloads": page_downloads,
-    "Reference Data": lambda d, f: (st.title("Reference Data"), st.info("Reference lists of sites, strata, and metadata."), st.dataframe(pd.DataFrame({'Site': sorted(set(d['baseline']['site']))})), st.dataframe(pd.DataFrame({'Stratum': sorted(set(d['baseline']['stratum']))}))),
     "Administration": lambda d, f: (st.title("Administration"), st.info("Read-only portal. Admin features are disabled in this environment.")),
 }
 
