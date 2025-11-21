@@ -18,6 +18,7 @@ import shapefile  # pyshp
 from pyproj import CRS, Transformer
 from typing import Any
 import os
+import tempfile
 
 
 # ---------- Page Configuration ----------
@@ -166,13 +167,55 @@ def _maybe_read_shapefile_folder(folder_path: str) -> Optional[dict]:
             geom = sr.shape.__geo_interface__
             if transformer is not None and "coordinates" in geom:
                 geom["coordinates"] = _transform_coords(geom["coordinates"], transformer)
-            props = {fields[i]: sr.record[i] for i in range(len(fields))}
+            # Sanitize attribute types for JSON
+            props = {}
+            for i in range(len(fields)):
+                k = fields[i]
+                v = sr.record[i]
+                try:
+                    if hasattr(v, "item"):
+                        v = v.item()
+                    elif isinstance(v, bytes):
+                        v = v.decode("utf-8", "ignore")
+                    elif isinstance(v, (set, tuple)):
+                        v = list(v)
+                except Exception:
+                    v = str(v)
+                # Coerce non-JSON-safe objects to strings
+                if not isinstance(v, (str, int, float, bool, type(None), list, dict)):
+                    v = str(v)
+                props[k] = v
             props["popup"] = "<br>".join([f"<b>{k}</b>: {props[k]}" for k in list(props.keys())[:12]])
             feats.append({"type": "Feature", "geometry": geom, "properties": props})
         return {"type": "FeatureCollection", "features": feats}
     except Exception:
         return None
 
+
+def _json_safe(value):
+    """Recursively convert common non-JSON-safe python/numpy/shapefile types to JSON-safe primitives."""
+    try:
+        import numpy as _np  # local import to avoid polluting globals
+        if isinstance(value, _np.generic):
+            return value.item()
+    except Exception:
+        pass
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8", "ignore")
+        except Exception:
+            return str(value)
+    if isinstance(value, (tuple, set)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    # Basic primitives pass through
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    # Fallback to string
+    return str(value)
 
 @st.cache_data(show_spinner=False)
 def load_data() -> Dict[str, object]:
@@ -237,15 +280,20 @@ def load_data() -> Dict[str, object]:
             if col not in qc_df.columns:
                 qc_df[col] = np.nan
 
-        # Optionally load local shapefiles if present
+        # Optionally load local shapefiles if present (prefer relative paths for production compatibility)
         custom_polygons: List[Tuple[str, dict]] = []
-        for path in [
+        cwd = os.getcwd()
+        candidate_paths = [
+            os.path.join(cwd, "Kamwenyetulo_VM42"),
+            os.path.join(cwd, "Kamwenyetulo_VM47"),
             r"C:\Users\RobelBerhanu\Desktop\MRV_Visuals_Angola\Kamwenyetulo_VM42",
             r"C:\Users\RobelBerhanu\Desktop\MRV_Visuals_Angola\Kamwenyetulo_VM47",
-        ]:
+        ]
+        for path in candidate_paths:
             gj = _maybe_read_shapefile_folder(path)
             if gj:
-                custom_polygons.append((path.split("\\")[-1], gj))
+                name = os.path.basename(path.rstrip("\\/"))
+                custom_polygons.append((name, gj))
 
         return {
             "baseline": baseline_df,
@@ -496,6 +544,21 @@ def load_data() -> Dict[str, object]:
         "responsible_analyst": analysts[-1],
     }
 
+    # Load local shapefiles (relative-first) so polygons show without upload
+    custom_polygons: List[Tuple[str, dict]] = []
+    cwd = os.getcwd()
+    candidate_paths = [
+        os.path.join(cwd, "Kamwenyetulo_VM42"),
+        os.path.join(cwd, "Kamwenyetulo_VM47"),
+        r"C:\Users\RobelBerhanu\Desktop\MRV_Visuals_Angola\Kamwenyetulo_VM42",
+        r"C:\Users\RobelBerhanu\Desktop\MRV_Visuals_Angola\Kamwenyetulo_VM47",
+    ]
+    for path in candidate_paths:
+        gj = _maybe_read_shapefile_folder(path)
+        if gj:
+            name = os.path.basename(path.rstrip("\\/"))
+            custom_polygons.append((name, gj))
+
     return {
         "baseline": baseline_df,
         "monitoring": monitoring_df,
@@ -505,6 +568,7 @@ def load_data() -> Dict[str, object]:
         "boundaries_geojson": boundaries_geojson,
         "strata_geojson": strata_geojson,
         "metadata": metadata,
+        "custom_polygons": custom_polygons,
     }
 
 
@@ -1435,6 +1499,35 @@ def page_map(data: Dict[str, object], flt: dict) -> None:
     plots = data["plots_geojson"]
     boundaries = data["boundaries_geojson"]
     strata = data["strata_geojson"]
+    custom_polys = list(data.get("custom_polygons", []))  # List[Tuple[name, geojson]]
+
+    # Optional: allow uploading zipped shapefiles for VM0042 / VM0047 (for production deployments)
+    with st.expander("Add custom polygons (optional)", expanded=False):
+        colu1, colu2 = st.columns(2)
+        with colu1:
+            up42 = st.file_uploader("Upload VM0042 Shapefile (.zip)", type=["zip"], key="upl_vm42")
+            if up42 is not None:
+                tmpdir = tempfile.mkdtemp(prefix="shp42_")
+                zip_path = os.path.join(tmpdir, "vm42.zip")
+                with open(zip_path, "wb") as f:
+                    f.write(up42.getbuffer())
+                with zipfile.ZipFile(zip_path, "r") as zf:
+                    zf.extractall(tmpdir)
+                gj = _maybe_read_shapefile_folder(tmpdir)
+                if gj:
+                    custom_polys.append(("VM0042 (uploaded)", gj))
+        with colu2:
+            up47 = st.file_uploader("Upload VM0047 Shapefile (.zip)", type=["zip"], key="upl_vm47")
+            if up47 is not None:
+                tmpdir = tempfile.mkdtemp(prefix="shp47_")
+                zip_path = os.path.join(tmpdir, "vm47.zip")
+                with open(zip_path, "wb") as f:
+                    f.write(up47.getbuffer())
+                with zipfile.ZipFile(zip_path, "r") as zf:
+                    zf.extractall(tmpdir)
+                gj = _maybe_read_shapefile_folder(tmpdir)
+                if gj:
+                    custom_polys.append(("VM0047 (uploaded)", gj))
 
     # Filter plots by sidebar choices
     filtered_features: List[dict] = []
@@ -1514,33 +1607,127 @@ def page_map(data: Dict[str, object], flt: dict) -> None:
 
     completion_to_color = {"Complete": [16, 185, 129], "Partial": [245, 158, 11], "Pending": [239, 68, 68]}
 
+    # Methodology selector for custom polygons
+    def _detect_site_key(props: Dict[str, Any]) -> Optional[str]:
+        cand = ["site", "Site", "SITE", "site_name", "SITE_NAME", "name", "Name"]
+        for k in cand:
+            if k in props:
+                return k
+        return None
+
+    # Dedupe methodology names to avoid repeated options
+    methods_available = sorted(list({name for name, _ in custom_polys})) if custom_polys else []
+    selected_method = None
+    selected_site = None
+    filtered_custom = custom_polys
+    if methods_available:
+        with st.container():
+            mcol1, mcol2 = st.columns([1, 1])
+            with mcol1:
+                selected_method = st.selectbox("Polygon methodology layer", ["All"] + methods_available, index=0)
+            if selected_method and selected_method != "All":
+                filtered_custom = [t for t in custom_polys if t[0] == selected_method]
+            # Site drop-down (aggregated across chosen layers)
+            all_sites = []
+            for _, gj in filtered_custom:
+                for feat in gj.get("features", []):
+                    key = _detect_site_key(feat.get("properties", {})) or ""
+                    if key:
+                        all_sites.append(str(feat["properties"].get(key)))
+            all_sites = sorted(list({s for s in all_sites if s and s.strip()}))
+            with mcol2:
+                selected_site = st.selectbox("Site (attributes)", ["All"] + all_sites, index=0) if all_sites else None
+
+    # Filter features by selected site for popup
+    final_polys: List[Tuple[str, dict]] = []
+    for name, gj in filtered_custom:
+        if selected_site and selected_site != "All":
+            feats = []
+            for f in gj.get("features", []):
+                key = _detect_site_key(f.get("properties", {}))
+                if key and str(f["properties"].get(key)) == selected_site:
+                    feats.append(f)
+            gj2 = {"type": "FeatureCollection", "features": feats}
+            final_polys.append((name, gj2))
+        else:
+            final_polys.append((name, gj))
+
+    # If we have polygons, recentre the map to them (they may be outside plots/boundaries)
+    initial_zoom = 6
+    try:
+        if final_polys:
+            merged = {"type": "FeatureCollection", "features": []}
+            for _, gj in final_polys:
+                merged["features"].extend(gj.get("features", []))
+            cx, cy = _center_of_geojson(merged)
+            center_lon, center_lat = cx, cy
+            # Estimate a sensible zoom from polygon span
+            lons, lats = [], []
+            for f in merged.get("features", []):
+                geom = f.get("geometry", {})
+                if geom.get("type") == "Polygon":
+                    coords = geom.get("coordinates", [[[]]])[0]
+                    for lon, lat in coords:
+                        lons.append(lon); lats.append(lat)
+                elif geom.get("type") == "MultiPolygon":
+                    for ring in geom.get("coordinates", []):
+                        for lon, lat in ring[0]:
+                            lons.append(lon); lats.append(lat)
+            if lons and lats:
+                lon_span = max(lons) - min(lons)
+                lat_span = max(lats) - min(lats)
+                span = max(lon_span, lat_span)
+                # crude mapping span (degrees) → zoom
+                if span < 0.15: initial_zoom = 12
+                elif span < 0.3: initial_zoom = 11
+                elif span < 0.6: initial_zoom = 10
+                elif span < 1.2: initial_zoom = 9
+                elif span < 2.5: initial_zoom = 8
+                elif span < 5.0: initial_zoom = 7
+                else: initial_zoom = 6
+    except Exception:
+        pass
+
     # Build custom polygon layers if available
     custom_layers = []
-    custom_polys = data.get("custom_polygons", [])
-    custom_colors = [[244, 63, 94, 110], [234, 179, 8, 110]]  # rose, amber
-    for idx, (name, gj) in enumerate(custom_polys):
+    # Distinct, high-contrast colors
+    custom_colors = [
+        [219, 39, 119, 140],   # pink-600
+        [16, 185, 129, 140],   # emerald-500
+        [245, 158, 11, 140],   # amber-500
+        [59, 130, 246, 140],   # blue-500
+    ]
+    for idx, (name, gj) in enumerate(final_polys):
         if not gj:
             continue
+        gj = _json_safe(gj)
         custom_layers.append(
             pdk.Layer(
                 "GeoJsonLayer",
                 data=gj,
                 stroked=True,
                 filled=True,
+                opacity=0.45,
                 get_fill_color=custom_colors[idx % len(custom_colors)],
-                get_line_color=[17, 24, 39],
-                line_width_min_pixels=1.5,
+                get_line_color=[17, 24, 39],  # slate-900
+                line_width_min_pixels=3.5,
                 pickable=True,
+                auto_highlight=True,
             )
         )
 
+    # Ensure all GeoJSONs are JSON-serializable for pydeck
+    boundaries_safe = _json_safe(boundaries)
+    strata_safe = _json_safe(strata)
+    plots_safe = _json_safe(plots_filtered)
+
     deck = pdk.Deck(
         map_style=("mapbox://styles/mapbox/light-v11" if MAPBOX_ENABLED else None),
-        initial_view_state=pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=6, bearing=0, pitch=0),
+        initial_view_state=pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=initial_zoom, bearing=0, pitch=0),
         layers=[
             pdk.Layer(
                 "GeoJsonLayer",
-                data=boundaries,
+                data=boundaries_safe,
                 stroked=True,
                 filled=False,
                 get_line_color=[52, 211, 153],
@@ -1548,7 +1735,7 @@ def page_map(data: Dict[str, object], flt: dict) -> None:
             ),
             pdk.Layer(
                 "GeoJsonLayer",
-                data=strata,
+                data=strata_safe,
                 stroked=True,
                 filled=True,
                 get_fill_color=[59, 130, 246, 40],
@@ -1557,7 +1744,7 @@ def page_map(data: Dict[str, object], flt: dict) -> None:
             ),
             pdk.Layer(
                 "GeoJsonLayer",
-                data=plots_filtered,
+                data=plots_safe,
                 point_type="circle",
                 get_fill_color="[properties.completion_status == 'Complete' ? 16 : (properties.completion_status == 'Partial' ? 245 : 239), properties.completion_status == 'Complete' ? 185 : (properties.completion_status == 'Partial' ? 158 : 68), properties.completion_status == 'Complete' ? 129 : (properties.completion_status == 'Partial' ? 11 : 68), 180]",
                 get_radius=60,
@@ -1571,8 +1758,17 @@ def page_map(data: Dict[str, object], flt: dict) -> None:
     st.pydeck_chart(deck, use_container_width=True)
 
     # Quick debug note on custom polygons loaded
-    if custom_polys:
-        st.caption(f"Loaded custom polygon layers: {', '.join([n for n,_ in custom_polys])}")
+    if final_polys:
+        st.caption(f"Loaded custom polygon layers: {', '.join([n for n,_ in final_polys])}")
+        # Attributes preview for currently selected site (if any)
+        if selected_site and selected_site != "All":
+            rows = []
+            for _, gj in final_polys:
+                for f in gj.get("features", []):
+                    rows.append(f.get("properties", {}))
+            if rows:
+                st.markdown("##### Selected site attributes")
+                st.dataframe(pd.DataFrame(rows), use_container_width=True)
 
     st.markdown(
         """
@@ -1585,34 +1781,7 @@ def page_map(data: Dict[str, object], flt: dict) -> None:
         unsafe_allow_html=True,
     )
 
-    # Right-side summary panel for visible features
-    with st.expander("Map extent summary", expanded=True):
-        feats = filtered_features
-        if not feats:
-            _render_empty_message("No sampling plots in current filters.")
-        else:
-            total = len(feats)
-            completed = sum(1 for f in feats if f["properties"].get("completion_status") == "Complete")
-            pct = 100 * completed / max(total, 1)
-            vals = [f["properties"].get("value") for f in feats if isinstance(f["properties"].get("value"), (int, float))]
-            uncs = [f["properties"].get("uncertainty_percent") for f in feats if isinstance(f["properties"].get("uncertainty_percent"), (int, float))]
-            mean_val = np.mean(vals) if vals else np.nan
-            mean_unc = np.mean(uncs) if uncs else np.nan
-            meta_ver = list({f["properties"].get("dataset_version") for f in feats}) or ["—"]
-            st.columns(4)[0].metric("Visible plots", f"{total:,}")
-            st.columns(4)[1].metric("% completed", f"{pct:.1f}%")
-            st.columns(4)[2].metric("Mean value", f"{mean_val:,.1f}" if not np.isnan(mean_val) else "—")
-            st.columns(4)[3].metric("Mean uncertainty", f"{mean_unc:.1f}%" if not np.isnan(mean_unc) else "—")
-            st.caption(f"Dataset versions: {', '.join(map(str, meta_ver))}")
-            # Export visible features
-            csv_rows = []
-            for f in feats:
-                row = {"lon": f["geometry"]["coordinates"][0], "lat": f["geometry"]["coordinates"][1]}
-                row.update(f["properties"])
-                csv_rows.append(row)
-            df_vis = pd.DataFrame(csv_rows)
-            st.download_button("Download visible (GeoJSON)", data=json.dumps({"type": "FeatureCollection", "features": feats}).encode("utf-8"), file_name="visible.geojson", mime="application/geo+json")
-            st.download_button("Download visible (CSV)", data=_to_csv_bytes(df_vis), file_name="visible.csv", mime="text/csv")
+    # Removed map extent summary section per request
 
 
 # Removed unused pages: Data Explorer, QC Status, Version History/Audit, Verification Dashboard
