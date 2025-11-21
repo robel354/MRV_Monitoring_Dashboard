@@ -1399,8 +1399,17 @@ def page_monitoring_comparison(data: Dict[str, object], flt: dict) -> None:
                     for p in pools:
                         up.append({"period": row["period"], "pool": p, "uncertainty_percent": row["uncertainty_percent"]})
                 up_df = pd.DataFrame(up)
-                fig4 = px.box(up_df, x="period", y="uncertainty_percent", color="pool", points=False, title="Uncertainty by carbon pool")
-                fig4.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=10))
+                fig4 = px.box(
+                    up_df,
+                    x="period",
+                    y="uncertainty_percent",
+                    color="pool",
+                    points=False,
+                )
+                # No title to avoid clipping; compact margins
+                fig4.update_layout(height=360, margin=dict(l=10, r=20, t=10, b=10))
+                fig4.update_yaxes(automargin=True)
+                fig4.update_xaxes(automargin=True)
                 st.plotly_chart(fig4, use_container_width=True)
 
     with tab_ccb:
