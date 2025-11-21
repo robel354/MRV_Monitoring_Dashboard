@@ -1008,7 +1008,13 @@ def page_vcus(data: Dict[str, object], flt: dict) -> None:
         )
 
     st.markdown("#### All selected sites")
-    st.table(build_vcu_table(base))
+    # Two-decimal formatting for the summary table
+    tbl_all = build_vcu_table(base)
+    for c in ["VM0042 (tCO₂e)", "VM0047 (tCO₂e)", "Combined (tCO₂e)"]:
+        tbl_all[c] = tbl_all[c].map(lambda x: f"{float(x):,.2f}")
+    st.table(tbl_all)
+
+    # (moved chart to end of section after per-site tables)
 
     # Per project area instance (site) tabs
     sites = list(dict.fromkeys(base["site"].dropna().tolist()))  # preserve order
@@ -1019,7 +1025,41 @@ def page_vcus(data: Dict[str, object], flt: dict) -> None:
         with t:
             df_site = base[base["site"] == site]
             st.markdown(f"##### {site} (tCO₂e)")
-            st.table(build_vcu_table(df_site))
+            tbl_site = build_vcu_table(df_site)
+            for c in ["VM0042 (tCO₂e)", "VM0047 (tCO₂e)", "Combined (tCO₂e)"]:
+                tbl_site[c] = tbl_site[c].map(lambda x: f"{float(x):,.2f}")
+            st.table(tbl_site)
+
+    # Cross-site comparison chart (combined VCUs per pool by site) - placed after the tables
+    pools = [
+        "Aboveground biomass (AGB) (tCO2e)",
+        "Belowground biomass (BGB) (tCO2e)",
+        "Soil organic carbon (tCO2e)",
+    ]
+    by_site = (
+        base[base["metric"].isin(pools)]
+        .groupby(["site", "metric"], as_index=False)["value"]
+        .sum()
+    )
+    name_map = {
+        "Aboveground biomass (AGB) (tCO2e)": "AGB",
+        "Belowground biomass (BGB) (tCO2e)": "BGB",
+        "Soil organic carbon (tCO2e)": "SOC",
+    }
+    by_site["pool"] = by_site["metric"].map(name_map)
+    by_site["value"] = by_site["value"].round(2)
+    st.markdown("#### VCUs by site and carbon pool (combined across VM0042 & VM0047)")
+    fig_comp = px.bar(
+        by_site,
+        x="site",
+        y="value",
+        color="pool",
+        barmode="group",
+        labels={"value": "tCO₂e"},
+        text_auto=".2f",
+    )
+    fig_comp.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10), legend_title_text="Carbon pool")
+    st.plotly_chart(fig_comp, use_container_width=True)
 
 
 def page_deductions(data: Dict[str, object], flt: dict) -> None:
