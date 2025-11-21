@@ -1692,15 +1692,23 @@ def page_map(data: Dict[str, object], flt: dict) -> None:
     custom_layers = []
     # Distinct, high-contrast colors
     custom_colors = [
-        [219, 39, 119, 140],   # pink-600
+        [59, 130, 246, 140],   # blue-500
         [16, 185, 129, 140],   # emerald-500
         [245, 158, 11, 140],   # amber-500
-        [59, 130, 246, 140],   # blue-500
+        [219, 39, 119, 140],   # pink-600
     ]
+    def _color_for_name(layer_name: str, idx: int) -> list:
+        nm = (layer_name or "").lower()
+        if "vm0042" in nm or "vm42" in nm or "0042" in nm or "42" in nm:
+            return [59, 130, 246, 140]  # blue for VM0042
+        if "vm0047" in nm or "vm47" in nm or "0047" in nm or "47" in nm:
+            return [16, 185, 129, 140]  # green for VM0047
+        return custom_colors[idx % len(custom_colors)]
     for idx, (name, gj) in enumerate(final_polys):
         if not gj:
             continue
         gj = _json_safe(gj)
+        fill_color = _color_for_name(name, idx)
         custom_layers.append(
             pdk.Layer(
                 "GeoJsonLayer",
@@ -1708,7 +1716,7 @@ def page_map(data: Dict[str, object], flt: dict) -> None:
                 stroked=True,
                 filled=True,
                 opacity=0.45,
-                get_fill_color=custom_colors[idx % len(custom_colors)],
+                get_fill_color=fill_color,
                 get_line_color=[17, 24, 39],  # slate-900
                 line_width_min_pixels=3.5,
                 pickable=True,
