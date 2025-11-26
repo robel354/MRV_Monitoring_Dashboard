@@ -284,11 +284,7 @@ def load_data() -> Dict[str, object]:
         custom_polygons: List[Tuple[str, dict]] = []
         cwd = os.getcwd()
         candidate_paths = [
-            os.path.join(cwd, "Kamwenyetulo_VM42"),
-            os.path.join(cwd, "Kamwenyetulo_VM47"),
             os.path.join(cwd, "Luxiha_Dashboard"),
-            r"C:\Users\RobelBerhanu\Desktop\MRV_Visuals_Angola\Kamwenyetulo_VM42",
-            r"C:\Users\RobelBerhanu\Desktop\MRV_Visuals_Angola\Kamwenyetulo_VM47",
             r"C:\Users\RobelBerhanu\Desktop\MRV_Visuals_Angola\Luxiha_Dashboard",
         ]
         for path in candidate_paths:
@@ -550,11 +546,7 @@ def load_data() -> Dict[str, object]:
     custom_polygons: List[Tuple[str, dict]] = []
     cwd = os.getcwd()
     candidate_paths = [
-        os.path.join(cwd, "Kamwenyetulo_VM42"),
-        os.path.join(cwd, "Kamwenyetulo_VM47"),
         os.path.join(cwd, "Luxiha_Dashboard"),
-        r"C:\Users\RobelBerhanu\Desktop\MRV_Visuals_Angola\Kamwenyetulo_VM42",
-        r"C:\Users\RobelBerhanu\Desktop\MRV_Visuals_Angola\Kamwenyetulo_VM47",
         r"C:\Users\RobelBerhanu\Desktop\MRV_Visuals_Angola\Luxiha_Dashboard",
     ]
     for path in candidate_paths:
@@ -723,7 +715,10 @@ def page_baseline(data: Dict[str, object], flt: dict) -> None:
             subset = df[df["metric"] == name]
             return float(subset["value"].sum()), float(subset["uncertainty_percent"].mean()) if not subset.empty else (0.0, float("nan"))  # type: ignore
 
-        col1, col2, col3 = st.columns(3)
+        if methodology == "VM0042":
+            col1, col2 = st.columns(2)
+        else:
+            col1, col2, col3 = st.columns(3)
         v_agb, u_agb = metric_value("Aboveground biomass (AGB) (tCO2e)")
         v_bgb, u_bgb = metric_value("Belowground biomass (BGB) (tCO2e)")
         v_soc, u_soc = metric_value("Soil organic carbon (tCO2e)")
@@ -736,41 +731,23 @@ def page_baseline(data: Dict[str, object], flt: dict) -> None:
             _kpi_card("AGB", f"{v_agb:,.0f} tCO₂e", help_text=f"+ {u_agb:.1f}%")
         with col2:
             _kpi_card("BGB", f"{v_bgb:,.0f} tCO₂e", help_text=f"+ {u_bgb:.1f}%")
-        with col3:
-            _kpi_card("SOC", f"{v_soc:,.0f} tCO₂e", help_text=f"+ {u_soc:.1f}%")
+        if methodology != "VM0042":
+            with col3:
+                _kpi_card("SOC", f"{v_soc:,.0f} tCO₂e", help_text=f"+ {u_soc:.1f}%")
 
-        # Charts: Baseline components by grouping (respect pool-to-methodology ownership)
+        # Charts: Baseline components by grouping
         group_by = "site"
-        if methodology == "VM0042":
-            # Only SOC belongs here. Split SOC into two subcomponents for display.
-            soc_df = df[df["metric"] == "Soil organic carbon (tCO2e)"]
-            if soc_df.empty:
-                comp = pd.DataFrame(columns=[group_by, "metric", "value"])
-            else:
-                site_soc = soc_df.groupby(group_by, as_index=False)["value"].sum()
-                soc_re = site_soc.copy()
-                soc_re["value"] = site_soc["value"] * 0.5
-                soc_re["metric"] = "Soil organic carbon — Reforestation (tCO₂e)"
-                soc_ialm = site_soc.copy()
-                soc_ialm["value"] = site_soc["value"] - soc_re["value"]
-                soc_ialm["metric"] = "Soil organic carbon — IALM & Agroforestry (tCO₂e)"
-                comp = pd.concat([soc_re[[group_by, "metric", "value"]], soc_ialm[[group_by, "metric", "value"]]], ignore_index=True)
-        else:
-            # VM0047 shows biomass pools only
-            comp_keep = ["Aboveground biomass (AGB) (tCO2e)", "Belowground biomass (BGB) (tCO2e)"]
-            comp = df[df["metric"].isin(comp_keep)].groupby([group_by, "metric"], as_index=False)["value"].sum()
+        comp_keep = ["Aboveground biomass (AGB) (tCO2e)", "Belowground biomass (BGB) (tCO2e)"]
+        comp = df[df["metric"].isin(comp_keep)].groupby([group_by, "metric"], as_index=False)["value"].sum()
         fig = px.bar(comp, x=group_by, y="value", color="metric", barmode="group", labels={"value": "tCO₂e"})
         fig.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), legend_title_text="Component")
         st.plotly_chart(fig, use_container_width=True)
 
         # Tables (column header filters via AgGrid; keep scrollbars by fixed height)
         st.markdown("#### Table 1 — Baseline carbon stocks")
-        # Filter rows to match ownership: VM0042 -> SOC only; VM0047 -> AGB/BGB only
+        # Filter rows to match requested display: show only AGB/BGB
         t1_src = df.copy()
-        if methodology == "VM0042":
-            t1_src = t1_src[t1_src["metric"] == "Soil organic carbon (tCO2e)"]
-        elif methodology == "VM0047":
-            t1_src = t1_src[t1_src["metric"].isin(["Aboveground biomass (AGB) (tCO2e)", "Belowground biomass (BGB) (tCO2e)"])]
+        t1_src = t1_src[t1_src["metric"].isin(["Aboveground biomass (AGB) (tCO2e)", "Belowground biomass (BGB) (tCO2e)"])]
         t1_df = t1_src[["site", "stratum", "metric", "value", "uncertainty_percent", "sample_count"]].rename(
             columns={"metric": "Carbon pool", "value": "Value (tCO₂e)", "uncertainty_percent": "Uncertainty (+%)"}
         )
@@ -824,34 +801,76 @@ def page_baseline(data: Dict[str, object], flt: dict) -> None:
         if df47.empty:
             _render_empty_message("No baseline data for VM0047 under current filters.")
         else:
-            # Metric cards like VM0042 plus benchmark
-            render_vm("VM0047")
-            # Benchmark fraction card (mean over selected rows where available)
-            bf = df47["benchmark_fraction"].dropna()
-            if not bf.empty:
-                _kpi_card("Performance benchmark fraction", f"{bf.mean():.2f}", help_text="Applied to biomass")
+            # Show SOC only (split into Reforestation vs IALM & Agroforestry)
+            soc_only = df47[df47["metric"] == "Soil organic carbon (tCO2e)"].copy()
+            v_soc = float(soc_only["value"].sum())
+            u_soc = float(soc_only["uncertainty_percent"].mean()) if not soc_only.empty else float("nan")
+            col = st.columns(1)[0]
+            with col:
+                _kpi_card("SOC", f"{v_soc:,.0f} tCO₂e", help_text=f"+ {u_soc:.1f}%")
 
-            # VM0047 net with benchmark deduction visual (approximate)
-            group_by = st.radio("Group by (VM0047)", ["site", "stratum"], horizontal=True, key="group_by_vm0047")
-            comp = df47[df47["metric"].isin(["Aboveground biomass (AGB) (tCO2e)", "Belowground biomass (BGB) (tCO2e)"] + EMISSIONS_METRICS + [LEAKAGE_METRIC])]
-            comp = comp.groupby([group_by, "metric"], as_index=False).agg(value=("value", "sum"), benchmark_fraction=("benchmark_fraction", "mean"))
-            # Split biomass into retained and deduction parts
-            bio = comp[comp["metric"] == "Aboveground biomass (AGB) (tCO2e)"].copy()
-            bio["biomass_retained"] = bio["value"] * bio["benchmark_fraction"].fillna(1.0)
-            bio["biomass_deduction"] = bio["value"] - bio["biomass_retained"]
-            # Assemble long format
-            pieces = [
-                bio[[group_by, "biomass_retained"]].rename(columns={"biomass_retained": "value"}).assign(component="Biomass (retained)"),
-                bio[[group_by, "biomass_deduction"]].rename(columns={"biomass_deduction": "value"}).assign(component="Benchmark deduction"),
-                comp[comp["metric"].isin(EMISSIONS_METRICS + [LEAKAGE_METRIC])].rename(columns={"metric": "component"})[[group_by, "component", "value"]],
-            ]
-            long = pd.concat(pieces, ignore_index=True)
-            # Sign: emissions, leakage, benchmark deduction negative
-            neg = set(EMISSIONS_METRICS + [LEAKAGE_METRIC, "Benchmark deduction"])
-            long["signed_value"] = long.apply(lambda r: -r["value"] if r["component"] in neg else r["value"], axis=1)
-            figvm = px.bar(long, x=group_by, y="signed_value", color="component", barmode="relative", labels={"signed_value": "Net tCO₂e"})
-            figvm.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), legend_title_text="Component")
-            st.plotly_chart(figvm, use_container_width=True)
+            group_by = "site"
+            if soc_only.empty:
+                comp = pd.DataFrame(columns=[group_by, "metric", "value"])
+            else:
+                site_soc = soc_only.groupby(group_by, as_index=False)["value"].sum()
+                soc_re = site_soc.copy()
+                soc_re["value"] = site_soc["value"] * 0.5
+                soc_re["metric"] = "Soil organic carbon — Reforestation (tCO₂e)"
+                soc_ialm = site_soc.copy()
+                soc_ialm["value"] = site_soc["value"] - soc_re["value"]
+                soc_ialm["metric"] = "Soil organic carbon — IALM & Agroforestry (tCO₂e)"
+                comp = pd.concat([soc_re[[group_by, "metric", "value"]], soc_ialm[[group_by, "metric", "value"]]], ignore_index=True)
+            fig = px.bar(comp, x=group_by, y="value", color="metric", barmode="group", labels={"value": "tCO₂e"})
+            fig.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), legend_title_text="Component")
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Table 1 — SOC only
+            st.markdown("#### Table 1 — Baseline carbon stocks (SOC)")
+            t1_df = soc_only[["site", "stratum", "metric", "value", "uncertainty_percent", "sample_count"]].rename(
+                columns={"metric": "Carbon pool", "value": "Value (tCO₂e)", "uncertainty_percent": "Uncertainty (+%)"}
+            )
+            t1_df["Value (tCO₂e)"] = t1_df["Value (tCO₂e)"].map(lambda x: float(f"{x:.2f}"))
+            t1_df["Uncertainty (+%)"] = t1_df["Uncertainty (+%)"].map(lambda x: float(f"{x:.2f}"))
+            g1 = GridOptionsBuilder.from_dataframe(t1_df)
+            g1.configure_default_column(filter=True, sortable=True, resizable=True, floatingFilter=True)
+            g1.configure_column("site", filter="agTextColumnFilter")
+            g1.configure_column("stratum", filter="agTextColumnFilter")
+            g1.configure_column("Carbon pool", filter="agTextColumnFilter")
+            g1.configure_column("Value (tCO₂e)", filter="agNumberColumnFilter")
+            g1.configure_column("Uncertainty (+%)", filter="agNumberColumnFilter")
+            g1.configure_grid_options(animateRows=True)
+            AgGrid(t1_df, gridOptions=g1.build(), theme="balham", update_mode=GridUpdateMode.NO_UPDATE, fit_columns_on_grid_load=True, height=420)
+
+            # Table 2 — Project emissions and leakage (unchanged)
+            st.markdown("#### Table 2 — Project emissions and leakage")
+            t2_df = df47[df47["metric"].isin(EMISSIONS_METRICS + [LEAKAGE_METRIC])][
+                ["site", "stratum", "metric", "value", "uncertainty_percent", "sample_count"]
+            ].rename(
+                columns={
+                    "metric": "Emission source",
+                    "value": "Value (tCO₂e)",
+                    "uncertainty_percent": "Uncertainty (+%)",
+                }
+            )
+            t2_df["Value (tCO₂e)"] = t2_df["Value (tCO₂e)"].map(lambda x: float(f"{x:.2f}"))
+            t2_df["Uncertainty (+%)"] = t2_df["Uncertainty (+%)"].map(lambda x: float(f"{x:.2f}"))
+            g2 = GridOptionsBuilder.from_dataframe(t2_df)
+            g2.configure_default_column(filter=True, sortable=True, resizable=True, floatingFilter=True)
+            g2.configure_column("site", filter="agTextColumnFilter")
+            g2.configure_column("stratum", filter="agTextColumnFilter")
+            g2.configure_column("Emission source", filter="agTextColumnFilter")
+            g2.configure_column("Value (tCO₂e)", filter="agNumberColumnFilter")
+            g2.configure_column("Uncertainty (+%)", filter="agNumberColumnFilter")
+            g2.configure_grid_options(animateRows=True)
+            AgGrid(
+                t2_df.sort_values(["site", "stratum", "Emission source"]),
+                gridOptions=g2.build(),
+                theme="balham",
+                update_mode=GridUpdateMode.NO_UPDATE,
+                fit_columns_on_grid_load=True,
+                height=420,
+            )
 
     with tab3:
         st.markdown("#### CCB: Climate, Community, Biodiversity")
@@ -1570,6 +1589,8 @@ def page_map(data: Dict[str, object], flt: dict) -> None:
     boundaries = data["boundaries_geojson"]
     strata = data["strata_geojson"]
     custom_polys = list(data.get("custom_polygons", []))  # List[Tuple[name, geojson]]
+    # Remove Kamwenyetulo polygons as requested
+    custom_polys = [t for t in custom_polys if "kamwenyetulo" not in (t[0] or "").lower()]
 
     # Filter plots by sidebar choices
     filtered_features: List[dict] = []
@@ -1844,8 +1865,9 @@ def page_map(data: Dict[str, object], flt: dict) -> None:
     st.pydeck_chart(deck, use_container_width=True)
 
     # Methodology legend (consistent colors; styled card similar to example)
-    inst_count = sum(len(gj.get("features", [])) for _, gj in final_polys) if final_polys else 0
-    legend_title = selected_site if selected_site and selected_site != "All" else "Selected area"
+    # inst_count = sum(len(gj.get("features", [])) for _, gj in final_polys) if final_polys else 0
+    inst_count = 1
+    legend_title = selected_site if selected_site and selected_site != "All" else "Luxiha"
     legend_html = f"""
     <div style="position:fixed; top:90px; right:24px; z-index:1000; pointer-events:none;">
       <div style="background:#ffffffdd;border:1px solid #ddd;border-radius:6px;padding:12px 14px;box-shadow:0 1px 2px rgba(0,0,0,0.05); pointer-events:auto;">
