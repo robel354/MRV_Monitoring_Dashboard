@@ -286,8 +286,10 @@ def load_data() -> Dict[str, object]:
         candidate_paths = [
             os.path.join(cwd, "Kamwenyetulo_VM42"),
             os.path.join(cwd, "Kamwenyetulo_VM47"),
+            os.path.join(cwd, "Luxiha_Dashboard"),
             r"C:\Users\RobelBerhanu\Desktop\MRV_Visuals_Angola\Kamwenyetulo_VM42",
             r"C:\Users\RobelBerhanu\Desktop\MRV_Visuals_Angola\Kamwenyetulo_VM47",
+            r"C:\Users\RobelBerhanu\Desktop\MRV_Visuals_Angola\Luxiha_Dashboard",
         ]
         for path in candidate_paths:
             gj = _maybe_read_shapefile_folder(path)
@@ -550,8 +552,10 @@ def load_data() -> Dict[str, object]:
     candidate_paths = [
         os.path.join(cwd, "Kamwenyetulo_VM42"),
         os.path.join(cwd, "Kamwenyetulo_VM47"),
+        os.path.join(cwd, "Luxiha_Dashboard"),
         r"C:\Users\RobelBerhanu\Desktop\MRV_Visuals_Angola\Kamwenyetulo_VM42",
         r"C:\Users\RobelBerhanu\Desktop\MRV_Visuals_Angola\Kamwenyetulo_VM47",
+        r"C:\Users\RobelBerhanu\Desktop\MRV_Visuals_Angola\Luxiha_Dashboard",
     ]
     for path in candidate_paths:
         gj = _maybe_read_shapefile_folder(path)
@@ -735,27 +739,49 @@ def page_baseline(data: Dict[str, object], flt: dict) -> None:
         with col3:
             _kpi_card("SOC", f"{v_soc:,.0f} tCO₂e", help_text=f"+ {u_soc:.1f}%")
 
-        # Charts: Baseline components by grouping
+        # Charts: Baseline components by grouping (respect pool-to-methodology ownership)
         group_by = "site"
-        comp_keep = ["Aboveground biomass (AGB) (tCO2e)", "Belowground biomass (BGB) (tCO2e)", "Soil organic carbon (tCO2e)"]
-        comp = df[df["metric"].isin(comp_keep)].groupby([group_by, "metric"], as_index=False)["value"].sum()
+        if methodology == "VM0042":
+            # Only SOC belongs here. Split SOC into two subcomponents for display.
+            soc_df = df[df["metric"] == "Soil organic carbon (tCO2e)"]
+            if soc_df.empty:
+                comp = pd.DataFrame(columns=[group_by, "metric", "value"])
+            else:
+                site_soc = soc_df.groupby(group_by, as_index=False)["value"].sum()
+                soc_re = site_soc.copy()
+                soc_re["value"] = site_soc["value"] * 0.5
+                soc_re["metric"] = "Soil organic carbon — Reforestation (tCO₂e)"
+                soc_ialm = site_soc.copy()
+                soc_ialm["value"] = site_soc["value"] - soc_re["value"]
+                soc_ialm["metric"] = "Soil organic carbon — IALM & Agroforestry (tCO₂e)"
+                comp = pd.concat([soc_re[[group_by, "metric", "value"]], soc_ialm[[group_by, "metric", "value"]]], ignore_index=True)
+        else:
+            # VM0047 shows biomass pools only
+            comp_keep = ["Aboveground biomass (AGB) (tCO2e)", "Belowground biomass (BGB) (tCO2e)"]
+            comp = df[df["metric"].isin(comp_keep)].groupby([group_by, "metric"], as_index=False)["value"].sum()
         fig = px.bar(comp, x=group_by, y="value", color="metric", barmode="group", labels={"value": "tCO₂e"})
         fig.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), legend_title_text="Component")
         st.plotly_chart(fig, use_container_width=True)
 
         # Tables (column header filters via AgGrid; keep scrollbars by fixed height)
         st.markdown("#### Table 1 — Baseline carbon stocks")
-        t1_df = df[["site", "stratum", "metric", "value", "uncertainty_percent", "sample_count"]].rename(
-            columns={"metric": "Carbon pool", "value": "Value (tCO₂e / VCUs)", "uncertainty_percent": "Uncertainty (+%)"}
+        # Filter rows to match ownership: VM0042 -> SOC only; VM0047 -> AGB/BGB only
+        t1_src = df.copy()
+        if methodology == "VM0042":
+            t1_src = t1_src[t1_src["metric"] == "Soil organic carbon (tCO2e)"]
+        elif methodology == "VM0047":
+            t1_src = t1_src[t1_src["metric"].isin(["Aboveground biomass (AGB) (tCO2e)", "Belowground biomass (BGB) (tCO2e)"])]
+        t1_df = t1_src[["site", "stratum", "metric", "value", "uncertainty_percent", "sample_count"]].rename(
+            columns={"metric": "Carbon pool", "value": "Value (tCO₂e)", "uncertainty_percent": "Uncertainty (+%)"}
         )
-        t1_df["Value (tCO₂e / VCUs)"] = t1_df["Value (tCO₂e / VCUs)"].map(lambda x: float(f"{x:.2f}"))
+        t1_df["Value (tCO₂e)"] = t1_df["Value (tCO₂e)"].map(lambda x: float(f"{x:.2f}"))
         t1_df["Uncertainty (+%)"] = t1_df["Uncertainty (+%)"].map(lambda x: float(f"{x:.2f}"))
         g1 = GridOptionsBuilder.from_dataframe(t1_df)
         g1.configure_default_column(filter=True, sortable=True, resizable=True, floatingFilter=True)
         g1.configure_column("site", filter="agTextColumnFilter")
         g1.configure_column("stratum", filter="agTextColumnFilter")
         g1.configure_column("Carbon pool", filter="agTextColumnFilter")
-        g1.configure_column("Value (tCO₂e / VCUs)", filter="agNumberColumnFilter")
+        g1.configure_column("Value (tCO₂e)", filter="agNumberColumnFilter")
         g1.configure_column("Uncertainty (+%)", filter="agNumberColumnFilter")
         g1.configure_grid_options(animateRows=True)
         AgGrid(t1_df, gridOptions=g1.build(), theme="balham", update_mode=GridUpdateMode.NO_UPDATE, fit_columns_on_grid_load=True, height=420)
@@ -807,7 +833,7 @@ def page_baseline(data: Dict[str, object], flt: dict) -> None:
 
             # VM0047 net with benchmark deduction visual (approximate)
             group_by = st.radio("Group by (VM0047)", ["site", "stratum"], horizontal=True, key="group_by_vm0047")
-            comp = df47[df47["metric"].isin(["Aboveground biomass (AGB) (tCO2e)", "Belowground biomass (BGB) (tCO2e)", "Soil organic carbon (tCO2e)"] + EMISSIONS_METRICS + [LEAKAGE_METRIC])]
+            comp = df47[df47["metric"].isin(["Aboveground biomass (AGB) (tCO2e)", "Belowground biomass (BGB) (tCO2e)"] + EMISSIONS_METRICS + [LEAKAGE_METRIC])]
             comp = comp.groupby([group_by, "metric"], as_index=False).agg(value=("value", "sum"), benchmark_fraction=("benchmark_fraction", "mean"))
             # Split biomass into retained and deduction parts
             bio = comp[comp["metric"] == "Aboveground biomass (AGB) (tCO2e)"].copy()
@@ -817,7 +843,6 @@ def page_baseline(data: Dict[str, object], flt: dict) -> None:
             pieces = [
                 bio[[group_by, "biomass_retained"]].rename(columns={"biomass_retained": "value"}).assign(component="Biomass (retained)"),
                 bio[[group_by, "biomass_deduction"]].rename(columns={"biomass_deduction": "value"}).assign(component="Benchmark deduction"),
-                comp[comp["metric"] == "Soil organic carbon (tCO2e)"].rename(columns={"metric": "component"})[[group_by, "component", "value"]],
                 comp[comp["metric"].isin(EMISSIONS_METRICS + [LEAKAGE_METRIC])].rename(columns={"metric": "component"})[[group_by, "component", "value"]],
             ]
             long = pd.concat(pieces, ignore_index=True)
@@ -965,36 +990,23 @@ def page_vcus(data: Dict[str, object], flt: dict) -> None:
         bgb_metric = "Belowground biomass (BGB) (tCO2e)"
         soc_metric = "Soil organic carbon (tCO2e)"
 
-        v4_agb = sum_metric("VM0042", agb_metric)
-        v4_bgb = sum_metric("VM0042", bgb_metric)
-        v4_soc = sum_metric("VM0042", soc_metric)
-
+        # Enforce ownership: AGB/BGB -> VM0047; SOC -> VM0042
         v7_agb = sum_metric("VM0047", agb_metric)
         v7_bgb = sum_metric("VM0047", bgb_metric)
-        v7_soc = sum_metric("VM0047", soc_metric)
+        v4_soc = sum_metric("VM0042", soc_metric)
+
+        # Split SOC (placeholder 50/50 unless dataset provides explicit split)
+        soc_re = v4_soc * 0.5
+        soc_ialm = v4_soc - soc_re
 
         rows = [
-            [
-                "Aboveground biomass (AGB)",
-                round(v4_agb, 2),
-                round(v7_agb, 2),
-                round(v4_agb + v7_agb, 2),
-            ],
-            [
-                "Belowground biomass (BGB)",
-                round(v4_bgb, 2),
-                round(v7_bgb, 2),
-                round(v4_bgb + v7_bgb, 2),
-            ],
-            [
-                "Soil Organic Carbon (SOC)",
-                round(v4_soc, 2),
-                round(v7_soc, 2),
-                round(v4_soc + v7_soc, 2),
-            ],
+            ["Aboveground biomass (AGB)", 0.00, round(v7_agb, 2), round(v7_agb, 2)],
+            ["Belowground biomass (BGB)", 0.00, round(v7_bgb, 2), round(v7_bgb, 2)],
+            ["Soil organic carbon — Reforestation (tCO₂e)", round(soc_re, 2), 0.00, round(soc_re, 2)],
+            ["Soil organic carbon — IALM & Agroforestry (tCO₂e)", round(soc_ialm, 2), 0.00, round(soc_ialm, 2)],
         ]
-        total_v4 = v4_agb + v4_bgb + v4_soc
-        total_v7 = v7_agb + v7_bgb + v7_soc
+        total_v4 = v4_soc
+        total_v7 = v7_agb + v7_bgb
         rows.append(["Total", round(total_v4, 2), round(total_v7, 2), round(total_v4 + total_v7, 2)])
 
         return pd.DataFrame(
@@ -1030,23 +1042,26 @@ def page_vcus(data: Dict[str, object], flt: dict) -> None:
                 tbl_site[c] = tbl_site[c].map(lambda x: f"{float(x):,.2f}")
             st.table(tbl_site)
 
-    # Cross-site comparison chart (combined VCUs per pool by site) - placed after the tables
-    pools = [
-        "Aboveground biomass (AGB) (tCO2e)",
-        "Belowground biomass (BGB) (tCO2e)",
-        "Soil organic carbon (tCO2e)",
-    ]
-    by_site = (
-        base[base["metric"].isin(pools)]
-        .groupby(["site", "metric"], as_index=False)["value"]
+    # Cross-site comparison chart (enforcing ownership in aggregation)
+    agb_rows = (
+        base[(base["methodology"] == "VM0047") & (base["metric"] == "Aboveground biomass (AGB) (tCO2e)")]
+        .groupby(["site"], as_index=False)["value"]
         .sum()
+        .assign(pool="AGB")
     )
-    name_map = {
-        "Aboveground biomass (AGB) (tCO2e)": "AGB",
-        "Belowground biomass (BGB) (tCO2e)": "BGB",
-        "Soil organic carbon (tCO2e)": "SOC",
-    }
-    by_site["pool"] = by_site["metric"].map(name_map)
+    bgb_rows = (
+        base[(base["methodology"] == "VM0047") & (base["metric"] == "Belowground biomass (BGB) (tCO2e)")]
+        .groupby(["site"], as_index=False)["value"]
+        .sum()
+        .assign(pool="BGB")
+    )
+    soc_rows = (
+        base[(base["methodology"] == "VM0042") & (base["metric"] == "Soil organic carbon (tCO2e)")]
+        .groupby(["site"], as_index=False)["value"]
+        .sum()
+        .assign(pool="SOC")
+    )
+    by_site = pd.concat([agb_rows, bgb_rows, soc_rows], ignore_index=True)
     by_site["value"] = by_site["value"].round(2)
     st.markdown("#### VCUs by site and carbon pool (combined across VM0042 & VM0047)")
     fig_comp = px.bar(
@@ -1292,28 +1307,34 @@ def page_overview(data: Dict[str, object], flt: dict) -> None:
     with t1:
         st.markdown("#### Verified Carbon Units (VM0042)")
         vm42_base = base[base["methodology"] == "VM0042"]
-        vm42_agb = vm42_base[vm42_base["metric"] == "Aboveground biomass (AGB) (tCO2e)"]["value"].sum()
-        vm42_bgb = vm42_base[vm42_base["metric"] == "Belowground biomass (BGB) (tCO2e)"]["value"].sum()
-        vm42_soc = vm42_base[vm42_base["metric"] == "Soil organic carbon (tCO2e)"]["value"].sum()
-        vm42_total = vm42_agb + vm42_bgb + vm42_soc
+        # SOC belongs under VM0042. Split SOC row into Reforestation SOC and IALM & Agroforestry SOC.
+        vm42_soc_total = float(vm42_base[vm42_base["metric"] == "Soil organic carbon (tCO2e)"]["value"].sum())
+        # If you have explicit split fields, replace the 50/50 placeholders below with the correct logic.
+        soc_re = round(vm42_soc_total * 0.5, 2)
+        soc_ialm_af = round(vm42_soc_total - soc_re, 2)
+        vm42_total = soc_re + soc_ialm_af
         df_vm42 = pd.DataFrame({
-            "Metric": ["Aboveground biomass (AGB)", "Belowground biomass (BGB)", "Soil Organic Carbon (SOC)", "Total"],
-            "Value (tCO₂e)": [vm42_agb, vm42_bgb, vm42_soc, vm42_total],
+            "Metric": [
+                "Soil Organic Carbon — Reforestation (tCO₂e)",
+                "Soil Organic Carbon — IALM & Agroforestry (tCO₂e)",
+                "Total",
+            ],
+            "Value (tCO₂e)": [soc_re, soc_ialm_af, vm42_total],
         })
-        df_vm42["Value (tCO₂e)"] = df_vm42["Value (tCO₂e)"].map(lambda x: f"{x:,.2f}")
+        df_vm42["Value (tCO₂e)"] = df_vm42["Value (tCO₂e)"].map(lambda x: f"{float(x):,.2f}")
         st.table(df_vm42)
     with t2:
         st.markdown("#### Verified Carbon Units (VM0047)")
         vm47_base = base[base["methodology"] == "VM0047"]
-        vm47_agb = vm47_base[vm47_base["metric"] == "Aboveground biomass (AGB) (tCO2e)"]["value"].sum()
-        vm47_bgb = vm47_base[vm47_base["metric"] == "Belowground biomass (BGB) (tCO2e)"]["value"].sum()
-        vm47_soc = vm47_base[vm47_base["metric"] == "Soil organic carbon (tCO2e)"]["value"].sum()
-        vm47_total = vm47_agb + vm47_bgb + vm47_soc
+        # AGB and BGB belong under VM0047. SOC excluded here.
+        vm47_agb = float(vm47_base[vm47_base["metric"] == "Aboveground biomass (AGB) (tCO2e)"]["value"].sum())
+        vm47_bgb = float(vm47_base[vm47_base["metric"] == "Belowground biomass (BGB) (tCO2e)"]["value"].sum())
+        vm47_total = vm47_agb + vm47_bgb
         df_vm47 = pd.DataFrame({
-            "Metric": ["Aboveground biomass (AGB)", "Belowground biomass (BGB)", "Soil Organic Carbon (SOC)", "Total"],
-            "Value (tCO₂e)": [vm47_agb, vm47_bgb, vm47_soc, vm47_total],
+            "Metric": ["Aboveground biomass (AGB)", "Belowground biomass (BGB)", "Total"],
+            "Value (tCO₂e)": [vm47_agb, vm47_bgb, vm47_total],
         })
-        df_vm47["Value (tCO₂e)"] = df_vm47["Value (tCO₂e)"].map(lambda x: f"{x:,.2f}")
+        df_vm47["Value (tCO₂e)"] = df_vm47["Value (tCO₂e)"].map(lambda x: f"{float(x):,.2f}")
         st.table(df_vm47)
 
     st.markdown("### Dataset metadata")
@@ -1550,34 +1571,6 @@ def page_map(data: Dict[str, object], flt: dict) -> None:
     strata = data["strata_geojson"]
     custom_polys = list(data.get("custom_polygons", []))  # List[Tuple[name, geojson]]
 
-    # Optional: allow uploading zipped shapefiles for VM0042 / VM0047 (for production deployments)
-    with st.expander("Add custom polygons (optional)", expanded=False):
-        colu1, colu2 = st.columns(2)
-        with colu1:
-            up42 = st.file_uploader("Upload VM0042 Shapefile (.zip)", type=["zip"], key="upl_vm42")
-            if up42 is not None:
-                tmpdir = tempfile.mkdtemp(prefix="shp42_")
-                zip_path = os.path.join(tmpdir, "vm42.zip")
-                with open(zip_path, "wb") as f:
-                    f.write(up42.getbuffer())
-                with zipfile.ZipFile(zip_path, "r") as zf:
-                    zf.extractall(tmpdir)
-                gj = _maybe_read_shapefile_folder(tmpdir)
-                if gj:
-                    custom_polys.append(("VM0042 (uploaded)", gj))
-        with colu2:
-            up47 = st.file_uploader("Upload VM0047 Shapefile (.zip)", type=["zip"], key="upl_vm47")
-            if up47 is not None:
-                tmpdir = tempfile.mkdtemp(prefix="shp47_")
-                zip_path = os.path.join(tmpdir, "vm47.zip")
-                with open(zip_path, "wb") as f:
-                    f.write(up47.getbuffer())
-                with zipfile.ZipFile(zip_path, "r") as zf:
-                    zf.extractall(tmpdir)
-                gj = _maybe_read_shapefile_folder(tmpdir)
-                if gj:
-                    custom_polys.append(("VM0047 (uploaded)", gj))
-
     # Filter plots by sidebar choices
     filtered_features: List[dict] = []
     for feat in plots.get("features", []):
@@ -1746,18 +1739,36 @@ def page_map(data: Dict[str, object], flt: dict) -> None:
         [245, 158, 11, 140],   # amber-500
         [219, 39, 119, 140],   # pink-600
     ]
-    def _color_for_name(layer_name: str, idx: int) -> list:
+    def _infer_method_from(layer_name: str, props: Dict[str, Any]) -> Optional[str]:
+        # Try various common keys
+        for key in ["methodology", "Methodology", "method", "Method", "METHOD"]:
+            if key in props and str(props[key]).strip():
+                return str(props[key]).strip()
         nm = (layer_name or "").lower()
-        if "vm0042" in nm or "vm42" in nm or "0042" in nm or "42" in nm:
-            return [59, 130, 246, 140]  # blue for VM0042
-        if "vm0047" in nm or "vm47" in nm or "0047" in nm or "47" in nm:
-            return [16, 185, 129, 140]  # green for VM0047
-        return custom_colors[idx % len(custom_colors)]
+        if "vm0042" in nm or "vm42" in nm or "0042" in nm:
+            return "VM0042"
+        if "vm0047" in nm or "vm47" in nm or "0047" in nm:
+            return "VM0047"
+        return None
     for idx, (name, gj) in enumerate(final_polys):
         if not gj:
             continue
         gj = _json_safe(gj)
-        fill_color = _color_for_name(name, idx)
+        # Build rich popup from all attributes; compute consistent methodology color
+        gj_features = []
+        color_map = {"VM0042": [59, 130, 246, 140], "VM0047": [16, 185, 129, 140]}
+        for f in gj.get("features", []):
+            props = dict(f.get("properties", {}))
+            method_value = _infer_method_from(name, props)
+            if method_value and "methodology" not in props:
+                props["methodology"] = method_value
+            # Assign consistent fill color by methodology; fallback to pink if unknown
+            col = color_map.get(method_value or str(props.get("methodology", "")).strip() or "", [219, 39, 119, 140])
+            props["fill_r"], props["fill_g"], props["fill_b"], props["fill_a"] = col
+            if "popup" not in props:
+                props["popup"] = "<br>".join([f"<b>{k}</b>: {v}" for k, v in props.items()])
+            gj_features.append({"type": "Feature", "geometry": f.get("geometry"), "properties": props})
+        gj = {"type": "FeatureCollection", "features": gj_features}
         custom_layers.append(
             pdk.Layer(
                 "GeoJsonLayer",
@@ -1765,8 +1776,8 @@ def page_map(data: Dict[str, object], flt: dict) -> None:
                 stroked=True,
                 filled=True,
                 opacity=0.45,
-                get_fill_color=fill_color,
-                get_line_color=[17, 24, 39],  # slate-900
+                get_fill_color="[properties.fill_r, properties.fill_g, properties.fill_b, properties.fill_a]",
+                get_line_color=[17, 24, 39],
                 line_width_min_pixels=3.5,
                 pickable=True,
                 auto_highlight=True,
@@ -1778,41 +1789,82 @@ def page_map(data: Dict[str, object], flt: dict) -> None:
     strata_safe = _json_safe(strata)
     plots_safe = _json_safe(plots_filtered)
 
+    # Guard against invalid GeoJSON objects (deck.gl requires a 'type' field)
+    def _ensure_geojson(gj: Any) -> dict:
+        if not isinstance(gj, dict) or "type" not in gj:
+            return {"type": "FeatureCollection", "features": []}
+        if gj.get("type") == "FeatureCollection" and "features" not in gj:
+            return {"type": "FeatureCollection", "features": []}
+        return gj
+
+    boundaries_safe = _ensure_geojson(boundaries_safe)
+    strata_safe = _ensure_geojson(strata_safe)
+    plots_safe = _ensure_geojson(plots_safe)
+
+    # Basemap selector: Satellite (Esri) or Satellite (Mapbox) when token available
+    basemap_options = ["Satellite (Esri)"] + (["Satellite (Mapbox)"] if MAPBOX_ENABLED else [])
+    basemap_choice = st.selectbox("Basemap", basemap_options, index=0)
+
+    # Build layers list and map style according to selection
+    layers_list = []
+    deck_map_style = None
+    if basemap_choice == "Satellite (Mapbox)" and MAPBOX_ENABLED:
+        # Use Mapbox Satellite style (requires MAPBOX_TOKEN in secrets/env)
+        deck_map_style = "mapbox://styles/mapbox/satellite-v9"
+    else:
+        # Tokenless satellite fallback (Esri World Imagery)
+        layers_list.append(
+            pdk.Layer(
+                "TileLayer",
+                data="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+            )
+        )
+    # Only show points and any custom polygons (hide default boundaries/strata overlays)
+    layers_list.extend([
+        pdk.Layer(
+            "GeoJsonLayer",
+            data=plots_safe,
+            point_type="circle",
+            get_fill_color="[properties.completion_status == 'Complete' ? 16 : (properties.completion_status == 'Partial' ? 245 : 239), properties.completion_status == 'Complete' ? 185 : (properties.completion_status == 'Partial' ? 158 : 68), properties.completion_status == 'Complete' ? 129 : (properties.completion_status == 'Partial' ? 11 : 68), 180]",
+            get_radius=60,
+            pickable=True,
+        ),
+    ])
+    layers_list.extend(custom_layers)
+
     deck = pdk.Deck(
-        map_style=("mapbox://styles/mapbox/light-v11" if MAPBOX_ENABLED else None),
+        # Basemap controlled above; disable built-in provider styles unless Mapbox selected
+        map_style=deck_map_style,
+        map_provider=None if deck_map_style is None else "mapbox",
         initial_view_state=pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=initial_zoom, bearing=0, pitch=0),
-        layers=[
-            pdk.Layer(
-                "GeoJsonLayer",
-                data=boundaries_safe,
-                stroked=True,
-                filled=False,
-                get_line_color=[52, 211, 153],
-                line_width_min_pixels=2,
-            ),
-            pdk.Layer(
-                "GeoJsonLayer",
-                data=strata_safe,
-                stroked=True,
-                filled=True,
-                get_fill_color=[59, 130, 246, 40],
-                get_line_color=[59, 130, 246],
-                line_width_min_pixels=1,
-            ),
-            pdk.Layer(
-                "GeoJsonLayer",
-                data=plots_safe,
-                point_type="circle",
-                get_fill_color="[properties.completion_status == 'Complete' ? 16 : (properties.completion_status == 'Partial' ? 245 : 239), properties.completion_status == 'Complete' ? 185 : (properties.completion_status == 'Partial' ? 158 : 68), properties.completion_status == 'Complete' ? 129 : (properties.completion_status == 'Partial' ? 11 : 68), 180]",
-                get_radius=60,
-                pickable=True,
-            ),
-            *custom_layers,
-        ],
+        layers=layers_list,
         tooltip={"html": "{popup}", "style": {"backgroundColor": "white", "color": "#111", "fontSize": "12px"}},
     )
 
     st.pydeck_chart(deck, use_container_width=True)
+
+    # Methodology legend (consistent colors; styled card similar to example)
+    inst_count = sum(len(gj.get("features", [])) for _, gj in final_polys) if final_polys else 0
+    legend_title = selected_site if selected_site and selected_site != "All" else "Selected area"
+    legend_html = f"""
+    <div style="position:fixed; top:90px; right:24px; z-index:1000; pointer-events:none;">
+      <div style="background:#ffffffdd;border:1px solid #ddd;border-radius:6px;padding:12px 14px;box-shadow:0 1px 2px rgba(0,0,0,0.05); pointer-events:auto;">
+        <div style="font-weight:700;font-size:16px;margin-bottom:6px;">{legend_title}</div>
+        <div style="font-size:12px;color:#555;margin-bottom:8px;">Instance: {inst_count}</div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="display:inline-block;width:14px;height:14px;background:#3B82F6;border:1px solid #93C5FD;"></span>
+            <span style="font-size:13px;color:#111;">VM0042</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="display:inline-block;width:14px;height:14px;background:#10B981;border:1px solid #6EE7B7;"></span>
+            <span style="font-size:13px;color:#111;">VM0047</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+    st.markdown(legend_html, unsafe_allow_html=True)
 
     # Quick debug note on custom polygons loaded
     if final_polys:
