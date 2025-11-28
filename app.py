@@ -150,6 +150,27 @@ def _transform_coords(coords, transformer):
     return [_transform_coords(c, transformer) for c in coords]
 
 
+def _get_shapefile_mtime(folder_path: str) -> Optional[float]:
+    """Get the latest modification time of shapefile components in a folder."""
+    try:
+        if not os.path.isdir(folder_path):
+            return None
+        shp_files = [f for f in os.listdir(folder_path) if f.lower().endswith(".shp")]
+        if not shp_files:
+            return None
+        shp_path = os.path.join(folder_path, shp_files[0])
+        # Get modification time of .shp file (and related files)
+        mtime = os.path.getmtime(shp_path)
+        # Also check .dbf and .shx for completeness
+        for ext in [".dbf", ".shx", ".prj"]:
+            related_path = shp_path[:-4] + ext
+            if os.path.exists(related_path):
+                mtime = max(mtime, os.path.getmtime(related_path))
+        return mtime
+    except Exception:
+        return None
+
+
 def _maybe_read_shapefile_folder(folder_path: str) -> Optional[dict]:
     try:
         import os
@@ -228,9 +249,12 @@ def _json_safe(value):
     return str(value)
 
 @st.cache_data(show_spinner=False)
-def load_data() -> Dict[str, object]:
+def load_data(_shapefile_cache_key: float = 0.0) -> Dict[str, object]:
     """Load data from ./data if available; otherwise create realistic sample data.
     Returns a dictionary of dataframes/geojson objects.
+    
+    Args:
+        _shapefile_cache_key: Modification time of shapefiles (used to invalidate cache when shapefiles change)
     """
     # Try load from local data folder
     baseline_df = _maybe_read_csv("data/baseline.csv")
@@ -2510,7 +2534,20 @@ def main() -> None:
     # Move navigation to the top of the sidebar for visibility
     page = st.sidebar.radio("Navigation", list(PAGES.keys()), index=0)
 
-    data = load_data()
+    # Calculate shapefile cache key based on modification times
+    # This ensures cache is invalidated when shapefiles are updated
+    cwd = os.getcwd()
+    candidate_paths = [
+        os.path.join(cwd, "Luxiha_Dashboard"),
+        r"C:\Users\RobelBerhanu\Desktop\MRV_Visuals_Angola\Luxiha_Dashboard",
+    ]
+    shapefile_cache_key = 0.0
+    for path in candidate_paths:
+        mtime = _get_shapefile_mtime(path)
+        if mtime is not None:
+            shapefile_cache_key = max(shapefile_cache_key, mtime)
+    
+    data = load_data(_shapefile_cache_key=shapefile_cache_key)
     # Sidebar hosts only advanced options
     advanced = sidebar_advanced_filters(data)
     # Top sticky quick filter bar for primary filters
