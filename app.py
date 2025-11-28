@@ -785,8 +785,8 @@ def page_baseline(data: Dict[str, object], flt: dict) -> None:
             with col2:
                 _kpi_card(f"{pool_name} Reforestation", f"{v_re:,.0f} tCO₂e", help_text=f"+ {u_re:.1f}%")
 
-        # Charts by site
-        st.markdown("#### By Site")
+        # Charts by site - Disaggregated
+        st.markdown("#### By Site (Disaggregated)")
         comp_site = split_df.groupby(["site", "metric"], as_index=False)["value"].sum()
         fig_site = px.bar(
             comp_site,
@@ -797,10 +797,23 @@ def page_baseline(data: Dict[str, object], flt: dict) -> None:
             labels={"value": "tCO₂e", "site": "Site", "metric": "Component"}
         )
         fig_site.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), legend_title_text="Component")
-        st.plotly_chart(fig_site, use_container_width=True)
+        st.plotly_chart(fig_site, use_container_width=True, key=f"base_{pool_name}_site_dis")
 
-        # Charts by stratum
-        st.markdown("#### By Stratum")
+        # Charts by site - Aggregated
+        site_agg_total = split_df.groupby(["site"], as_index=False)["value"].sum()
+        site_agg_total["pool"] = f"{pool_name} Total"
+        st.markdown("#### By Site (Aggregated)")
+        fig_site_agg = px.bar(
+            site_agg_total,
+            x="site",
+            y="value",
+            labels={"value": "tCO₂e", "site": "Site"},
+        )
+        fig_site_agg.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(fig_site_agg, use_container_width=True, key=f"base_{pool_name}_site_agg")
+
+        # Charts by stratum - Disaggregated
+        st.markdown("#### By Stratum (Disaggregated)")
         comp_stratum = split_df.groupby(["stratum", "metric"], as_index=False)["value"].sum()
         fig_stratum = px.bar(
             comp_stratum,
@@ -811,55 +824,190 @@ def page_baseline(data: Dict[str, object], flt: dict) -> None:
             labels={"value": "tCO₂e", "stratum": "Stratum", "metric": "Component"}
         )
         fig_stratum.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), legend_title_text="Component")
-        st.plotly_chart(fig_stratum, use_container_width=True)
+        st.plotly_chart(fig_stratum, use_container_width=True, key=f"base_{pool_name}_stratum_dis")
+
+        # Charts by stratum - Aggregated
+        stratum_agg_total = split_df.groupby(["stratum"], as_index=False)["value"].sum()
+        stratum_agg_total["pool"] = f"{pool_name} Total"
+        st.markdown("#### By Stratum (Aggregated)")
+        fig_stratum_agg = px.bar(
+            stratum_agg_total,
+            x="stratum",
+            y="value",
+            labels={"value": "tCO₂e", "stratum": "Stratum"},
+        )
+        fig_stratum_agg.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(fig_stratum_agg, use_container_width=True, key=f"base_{pool_name}_stratum_agg")
 
         # Table — Baseline carbon stocks
         st.markdown("#### Table 1 — Baseline Carbon Stocks")
-        t1_df = split_df[["site", "stratum", "metric", "value", "uncertainty_percent", "sample_count"]].copy()
-        t1_df = t1_df.rename(columns={"metric": "Carbon Pool", "value": "Value (tCO₂e)", "uncertainty_percent": "Uncertainty (+%)"})
-        t1_df["Value (tCO₂e)"] = t1_df["Value (tCO₂e)"].map(lambda x: float(f"{x:.2f}"))
-        t1_df["Uncertainty (+%)"] = t1_df["Uncertainty (+%)"].map(lambda x: float(f"{x:.2f}"))
-        t1_df = t1_df.rename(columns={"site": "Site", "stratum": "Stratum"})
+        # Prepare base table without uncertainty
+        base_df = split_df[["site", "stratum", "metric", "value"]].copy()
+        base_df = base_df.rename(columns={"metric": "Carbon Pool", "value": "Value (tCO₂e)", "site": "Site", "stratum": "Stratum"})
+        base_df["Value (tCO₂e)"] = base_df["Value (tCO₂e)"].map(lambda x: float(f"{x:.2f}"))
+        
+        # Build table with inline totals
+        result_rows = []
+        strata_list = sorted(base_df["Stratum"].unique())
+        carbon_pools = sorted(base_df["Carbon Pool"].unique())
+        
+        # Group by stratum and carbon pool, inserting totals inline
+        for stratum in strata_list:
+            stratum_data = base_df[base_df["Stratum"] == stratum]
+            
+            # For each carbon pool component in this stratum
+            for pool in carbon_pools:
+                pool_data = stratum_data[stratum_data["Carbon Pool"] == pool]
+                # Add data rows for this pool in this stratum
+                for _, row in pool_data.iterrows():
+                    result_rows.append(row.to_dict())
+                
+                # Add total for this pool in this stratum (disaggregated total)
+                if not pool_data.empty:
+                    pool_total = pool_data["Value (tCO₂e)"].sum()
+                    result_rows.append({
+                        "Site": "Total",
+                        "Stratum": stratum,
+                        "Carbon Pool": pool,
+                        "Value (tCO₂e)": round(pool_total, 2)
+                    })
+            
+            # Add aggregated total for this stratum (e.g., AGB Total for this stratum)
+            if pool_name in ["AGB", "BGB"]:
+                af_data = stratum_data[stratum_data["Carbon Pool"] == f"{pool_name} Agroforestry"]
+                re_data = stratum_data[stratum_data["Carbon Pool"] == f"{pool_name} Reforestation"]
+                af_val = af_data["Value (tCO₂e)"].sum() if not af_data.empty else 0.0
+                re_val = re_data["Value (tCO₂e)"].sum() if not re_data.empty else 0.0
+                if af_val > 0 or re_val > 0:
+                    result_rows.append({
+                        "Site": "Total",
+                        "Stratum": stratum,
+                        "Carbon Pool": f"{pool_name} Total",
+                        "Value (tCO₂e)": round(af_val + re_val, 2)
+                    })
+            else:  # SOC
+                re_data = stratum_data[stratum_data["Carbon Pool"] == "Soil organic carbon — Reforestation"]
+                ialm_data = stratum_data[stratum_data["Carbon Pool"] == "Soil organic carbon — IALM & Agroforestry"]
+                re_val = re_data["Value (tCO₂e)"].sum() if not re_data.empty else 0.0
+                ialm_val = ialm_data["Value (tCO₂e)"].sum() if not ialm_data.empty else 0.0
+                if re_val > 0 or ialm_val > 0:
+                    result_rows.append({
+                        "Site": "Total",
+                        "Stratum": stratum,
+                        "Carbon Pool": "SOC Total",
+                        "Value (tCO₂e)": round(re_val + ialm_val, 2)
+                    })
+        
+        # Add overall totals for each carbon pool component (across all strata)
+        for pool in carbon_pools:
+            pool_total = base_df[base_df["Carbon Pool"] == pool]["Value (tCO₂e)"].sum()
+            result_rows.append({
+                "Site": "Total",
+                "Stratum": "Total",
+                "Carbon Pool": pool,
+                "Value (tCO₂e)": round(pool_total, 2)
+            })
+        
+        # Add overall aggregated total
+        if pool_name in ["AGB", "BGB"]:
+            af_total = base_df[base_df["Carbon Pool"] == f"{pool_name} Agroforestry"]["Value (tCO₂e)"].sum()
+            re_total = base_df[base_df["Carbon Pool"] == f"{pool_name} Reforestation"]["Value (tCO₂e)"].sum()
+            result_rows.append({
+                "Site": "Total",
+                "Stratum": "Total",
+                "Carbon Pool": f"{pool_name} Total",
+                "Value (tCO₂e)": round(af_total + re_total, 2)
+            })
+        else:  # SOC
+            re_total = base_df[base_df["Carbon Pool"] == "Soil organic carbon — Reforestation"]["Value (tCO₂e)"].sum()
+            ialm_total = base_df[base_df["Carbon Pool"] == "Soil organic carbon — IALM & Agroforestry"]["Value (tCO₂e)"].sum()
+            result_rows.append({
+                "Site": "Total",
+                "Stratum": "Total",
+                "Carbon Pool": "SOC Total",
+                "Value (tCO₂e)": round(re_total + ialm_total, 2)
+            })
+        
+        t1_df = pd.DataFrame(result_rows)
+        
         g1 = GridOptionsBuilder.from_dataframe(t1_df)
         g1.configure_default_column(filter=True, sortable=True, resizable=True, floatingFilter=True)
         g1.configure_column("Site", filter="agTextColumnFilter")
         g1.configure_column("Stratum", filter="agTextColumnFilter")
-        g1.configure_column("Carbon Pool", filter="agTextColumnFilter")
-        g1.configure_column("Value (tCO₂e)", filter="agNumberColumnFilter")
-        g1.configure_column("Uncertainty (+%)", filter="agNumberColumnFilter")
+        g1.configure_column("Carbon Pool", filter="agTextColumnFilter", flex=1)
+        g1.configure_column("Value (tCO₂e)", filter="agNumberColumnFilter", width=150)
         g1.configure_grid_options(animateRows=True)
-        AgGrid(t1_df, gridOptions=g1.build(), theme="balham", update_mode=GridUpdateMode.NO_UPDATE, fit_columns_on_grid_load=True, height=420, key=f"baseline_carbon_stocks_{pool_name}")
+        AgGrid(t1_df, gridOptions=g1.build(), theme="balham", update_mode=GridUpdateMode.NO_UPDATE, fit_columns_on_grid_load=False, height=420, key=f"baseline_carbon_stocks_{pool_name}")
 
         # Table 2 — Project emissions and leakage (show for all pools)
         st.markdown("#### Table 2 — Project Emissions And Leakage")
         # Get emissions from all methodologies
         emissions_df = base_all[base_all["metric"].isin(EMISSIONS_METRICS + [LEAKAGE_METRIC])].copy()
         if not emissions_df.empty:
-            t2_df = emissions_df[["site", "stratum", "metric", "value", "uncertainty_percent", "sample_count"]].rename(
+            base_emissions = emissions_df[["site", "stratum", "metric", "value"]].rename(
                 columns={
                     "metric": "Emission Source",
                     "value": "Value (tCO₂e)",
-                    "uncertainty_percent": "Uncertainty (+%)",
                     "site": "Site",
                     "stratum": "Stratum"
                 }
             )
-            t2_df["Value (tCO₂e)"] = t2_df["Value (tCO₂e)"].map(lambda x: float(f"{x:.2f}"))
-            t2_df["Uncertainty (+%)"] = t2_df["Uncertainty (+%)"].map(lambda x: float(f"{x:.2f}"))
+            base_emissions["Value (tCO₂e)"] = base_emissions["Value (tCO₂e)"].map(lambda x: float(f"{x:.2f}"))
+            
+            # Build table with inline totals
+            # First, sort the base data to ensure consistent ordering
+            base_emissions_sorted = base_emissions.sort_values(["Stratum", "Emission Source", "Site"])
+            
+            result_rows = []
+            strata_list = sorted(base_emissions_sorted["Stratum"].unique())
+            emissions_list = sorted(base_emissions_sorted["Emission Source"].unique())
+            
+            # Group by stratum and emission source, inserting totals inline
+            for stratum in strata_list:
+                stratum_data = base_emissions_sorted[base_emissions_sorted["Stratum"] == stratum]
+                
+                # For each emission source in this stratum
+                for emission in emissions_list:
+                    emission_data = stratum_data[stratum_data["Emission Source"] == emission]
+                    # Add data rows for this emission in this stratum (sorted by site)
+                    for _, row in emission_data.iterrows():
+                        result_rows.append(row.to_dict())
+                    
+                    # Add total for this emission in this stratum
+                    if not emission_data.empty:
+                        emission_total = emission_data["Value (tCO₂e)"].sum()
+                        result_rows.append({
+                            "Site": "Total",
+                            "Stratum": stratum,
+                            "Emission Source": emission,
+                            "Value (tCO₂e)": round(emission_total, 2)
+                        })
+            
+            # Add overall totals for each emission source (across all strata)
+            for emission in emissions_list:
+                emission_total = base_emissions_sorted[base_emissions_sorted["Emission Source"] == emission]["Value (tCO₂e)"].sum()
+                result_rows.append({
+                    "Site": "Total",
+                    "Stratum": "Total",
+                    "Emission Source": emission,
+                    "Value (tCO₂e)": round(emission_total, 2)
+                })
+            
+            t2_df = pd.DataFrame(result_rows)
+            
             g2 = GridOptionsBuilder.from_dataframe(t2_df)
             g2.configure_default_column(filter=True, sortable=True, resizable=True, floatingFilter=True)
             g2.configure_column("Site", filter="agTextColumnFilter")
             g2.configure_column("Stratum", filter="agTextColumnFilter")
-            g2.configure_column("Emission Source", filter="agTextColumnFilter")
-            g2.configure_column("Value (tCO₂e)", filter="agNumberColumnFilter")
-            g2.configure_column("Uncertainty (+%)", filter="agNumberColumnFilter")
+            g2.configure_column("Emission Source", filter="agTextColumnFilter", flex=1)
+            g2.configure_column("Value (tCO₂e)", filter="agNumberColumnFilter", width=150)
             g2.configure_grid_options(animateRows=True)
             AgGrid(
-                t2_df.sort_values(["Site", "Stratum", "Emission Source"]),
+                t2_df,
                 gridOptions=g2.build(),
                 theme="balham",
                 update_mode=GridUpdateMode.NO_UPDATE,
-                fit_columns_on_grid_load=True,
+                fit_columns_on_grid_load=False,
                 height=420,
                 key=f"baseline_emissions_{pool_name}",
             )
@@ -1038,13 +1186,21 @@ def page_vcus(data: Dict[str, object], flt: dict) -> None:
         soc_re = v4_soc * 0.55
         soc_ialm = v4_soc * 0.45
 
+        # Calculate subtotals for each carbon pool
+        agb_total = agb_af + agb_re
+        bgb_total = bgb_af + bgb_re
+        soc_total = soc_re + soc_ialm
+        
         rows = [
             ["AGB Agroforestry", 0.00, round(agb_af, 2), round(agb_af, 2)],
             ["AGB Reforestation", 0.00, round(agb_re, 2), round(agb_re, 2)],
+            ["AGB Total", 0.00, round(agb_total, 2), round(agb_total, 2)],
             ["BGB Agroforestry", 0.00, round(bgb_af, 2), round(bgb_af, 2)],
             ["BGB Reforestation", 0.00, round(bgb_re, 2), round(bgb_re, 2)],
+            ["BGB Total", 0.00, round(bgb_total, 2), round(bgb_total, 2)],
             ["Soil organic carbon — Reforestation", round(soc_re, 2), 0.00, round(soc_re, 2)],
             ["Soil organic carbon — IALM & Agroforestry", round(soc_ialm, 2), 0.00, round(soc_ialm, 2)],
+            ["SOC Total", round(soc_total, 2), 0.00, round(soc_total, 2)],
         ]
         total_v4 = v4_soc
         total_v7 = v7_agb + v7_bgb
@@ -1129,6 +1285,7 @@ def page_vcus(data: Dict[str, object], flt: dict) -> None:
     )
     soc_ialm_rows["value"] = soc_ialm_rows["value"] * 0.45
     
+    # Charts by site - Disaggregated
     by_site = pd.concat([agb_af_rows, agb_re_rows, bgb_af_rows, bgb_re_rows, soc_re_rows, soc_ialm_rows], ignore_index=True)
     by_site["value"] = by_site["value"].round(2)
     st.markdown("#### VCUs by site and carbon pool (disaggregated by component, combined across VM0042 & VM0047)")
@@ -1143,6 +1300,125 @@ def page_vcus(data: Dict[str, object], flt: dict) -> None:
     )
     fig_comp.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10), legend_title_text="Carbon Pool Component")
     st.plotly_chart(fig_comp, use_container_width=True)
+    
+    # Charts by site - Aggregated
+    agb_total_rows = (
+        agb_base.groupby(["site"], as_index=False)["value"]
+        .sum()
+        .assign(pool="AGB Total")
+    )
+    bgb_total_rows = (
+        bgb_base.groupby(["site"], as_index=False)["value"]
+        .sum()
+        .assign(pool="BGB Total")
+    )
+    soc_total_rows = (
+        soc_base.groupby(["site"], as_index=False)["value"]
+        .sum()
+        .assign(pool="SOC Total")
+    )
+    
+    by_site_agg = pd.concat([agb_total_rows, bgb_total_rows, soc_total_rows], ignore_index=True)
+    by_site_agg["value"] = by_site_agg["value"].round(2)
+    st.markdown("#### VCUs by site and carbon pool (aggregated, combined across VM0042 & VM0047)")
+    fig_agg = px.bar(
+        by_site_agg,
+        x="site",
+        y="value",
+        color="pool",
+        barmode="group",
+        labels={"value": "tCO₂e", "site": "Site", "pool": "Carbon Pool"},
+        text_auto=".2f",
+    )
+    fig_agg.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10), legend_title_text="Carbon Pool")
+    st.plotly_chart(fig_agg, use_container_width=True)
+    
+    # Charts by stratum - Disaggregated
+    agb_af_stratum = (
+        agb_base.groupby(["stratum"], as_index=False)["value"]
+        .sum()
+        .assign(pool="AGB Agroforestry")
+    )
+    agb_af_stratum["value"] = agb_af_stratum["value"] * 0.6
+    agb_re_stratum = (
+        agb_base.groupby(["stratum"], as_index=False)["value"]
+        .sum()
+        .assign(pool="AGB Reforestation")
+    )
+    agb_re_stratum["value"] = agb_re_stratum["value"] * 0.4
+    
+    bgb_af_stratum = (
+        bgb_base.groupby(["stratum"], as_index=False)["value"]
+        .sum()
+        .assign(pool="BGB Agroforestry")
+    )
+    bgb_af_stratum["value"] = bgb_af_stratum["value"] * 0.6
+    bgb_re_stratum = (
+        bgb_base.groupby(["stratum"], as_index=False)["value"]
+        .sum()
+        .assign(pool="BGB Reforestation")
+    )
+    bgb_re_stratum["value"] = bgb_re_stratum["value"] * 0.4
+    
+    soc_re_stratum = (
+        soc_base.groupby(["stratum"], as_index=False)["value"]
+        .sum()
+        .assign(pool="SOC — Reforestation")
+    )
+    soc_re_stratum["value"] = soc_re_stratum["value"] * 0.55
+    soc_ialm_stratum = (
+        soc_base.groupby(["stratum"], as_index=False)["value"]
+        .sum()
+        .assign(pool="SOC — IALM & Agroforestry")
+    )
+    soc_ialm_stratum["value"] = soc_ialm_stratum["value"] * 0.45
+    
+    by_stratum = pd.concat([agb_af_stratum, agb_re_stratum, bgb_af_stratum, bgb_re_stratum, soc_re_stratum, soc_ialm_stratum], ignore_index=True)
+    by_stratum["value"] = by_stratum["value"].round(2)
+    st.markdown("#### VCUs by stratum and carbon pool (disaggregated by component, combined across VM0042 & VM0047)")
+    fig_stratum_comp = px.bar(
+        by_stratum,
+        x="stratum",
+        y="value",
+        color="pool",
+        barmode="group",
+        labels={"value": "tCO₂e", "stratum": "Stratum", "pool": "Carbon Pool Component"},
+        text_auto=".2f",
+    )
+    fig_stratum_comp.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10), legend_title_text="Carbon Pool Component")
+    st.plotly_chart(fig_stratum_comp, use_container_width=True)
+    
+    # Charts by stratum - Aggregated
+    agb_total_stratum = (
+        agb_base.groupby(["stratum"], as_index=False)["value"]
+        .sum()
+        .assign(pool="AGB Total")
+    )
+    bgb_total_stratum = (
+        bgb_base.groupby(["stratum"], as_index=False)["value"]
+        .sum()
+        .assign(pool="BGB Total")
+    )
+    soc_total_stratum = (
+        soc_base.groupby(["stratum"], as_index=False)["value"]
+        .sum()
+        .assign(pool="SOC Total")
+    )
+    
+    by_stratum_agg = pd.concat([agb_total_stratum, bgb_total_stratum, soc_total_stratum], ignore_index=True)
+    by_stratum_agg["value"] = by_stratum_agg["value"].round(2)
+    st.markdown("#### VCUs by stratum and carbon pool (aggregated, combined across VM0042 & VM0047)")
+    fig_stratum_agg = px.bar(
+        by_stratum_agg,
+        x="stratum",
+        y="value",
+        color="pool",
+        barmode="group",
+        labels={"value": "tCO₂e", "stratum": "Stratum", "pool": "Carbon Pool"},
+        text_auto=".2f",
+    )
+    fig_stratum_agg.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10), legend_title_text="Carbon Pool")
+    st.plotly_chart(fig_stratum_agg, use_container_width=True)
 
 
 def page_deductions(data: Dict[str, object], flt: dict) -> None:
@@ -1507,10 +1783,11 @@ def page_monitoring_comparison(data: Dict[str, object], flt: dict) -> None:
             with col2:
                 _kpi_card(components[1], f"{total2:,.0f} tCO₂e")
 
-        # Charts
+        # Charts - Disaggregated by Period
+        st.markdown("#### By Period (Disaggregated)")
         left, right = st.columns(2)
         with left:
-            st.markdown("#### Sequestration Per Period")
+            st.markdown("##### Sequestration Per Period")
             fig = px.bar(
                 period_agg,
                 x="period",
@@ -1520,10 +1797,10 @@ def page_monitoring_comparison(data: Dict[str, object], flt: dict) -> None:
                 labels={"tco2e_this_period": "tCO₂e", "period": "Period", "component": "Component"},
             )
             fig.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10), legend_title_text="Component")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key=f"mon_{pool_name}_period_dis_bar")
 
         with right:
-            st.markdown("#### Cumulative Removals")
+            st.markdown("##### Cumulative Removals")
             # Ensure we have data for both components
             if len(components) >= 2:
                 # Sort by component first, then period to ensure proper line plotting
@@ -1548,9 +1825,94 @@ def page_monitoring_comparison(data: Dict[str, object], flt: dict) -> None:
                 # Ensure both traces are visible
                 for trace in fig2.data:
                     trace.showlegend = True
-                st.plotly_chart(fig2, use_container_width=True)
+                st.plotly_chart(fig2, use_container_width=True, key=f"mon_{pool_name}_period_dis_line")
             else:
                 _render_empty_message(f"Only {len(components)} component(s) found. Expected 2 components.")
+        
+        # Aggregated by Period
+        period_agg_total = split_df.groupby(["period"], as_index=False)["tco2e_this_period"].sum()
+        period_agg_total = period_agg_total.sort_values("period")
+        period_agg_total["cumulative_tco2e"] = period_agg_total["tco2e_this_period"].cumsum()
+        period_agg_total["pool"] = f"{pool_name} Total"
+        
+        st.markdown("#### By Period (Aggregated)")
+        left_agg, right_agg = st.columns(2)
+        with left_agg:
+            st.markdown("##### Sequestration Per Period")
+            fig_agg_period = px.bar(
+                period_agg_total,
+                x="period",
+                y="tco2e_this_period",
+                labels={"tco2e_this_period": "tCO₂e", "period": "Period"},
+            )
+            fig_agg_period.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10))
+            st.plotly_chart(fig_agg_period, use_container_width=True, key=f"mon_{pool_name}_period_agg_bar")
+        
+        with right_agg:
+            st.markdown("##### Cumulative Removals")
+            fig_agg_cum = px.line(
+                period_agg_total,
+                x="period",
+                y="cumulative_tco2e",
+                markers=True,
+                labels={"cumulative_tco2e": "tCO₂e", "period": "Period"},
+            )
+            fig_agg_cum.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10))
+            st.plotly_chart(fig_agg_cum, use_container_width=True, key=f"mon_{pool_name}_period_agg_line")
+        
+        # Charts by Site - Disaggregated
+        site_agg = split_df.groupby(["site", "component"], as_index=False)["tco2e_this_period"].sum()
+        st.markdown("#### By Site (Disaggregated)")
+        fig_site_dis = px.bar(
+            site_agg,
+            x="site",
+            y="tco2e_this_period",
+            color="component",
+            barmode="group",
+            labels={"tco2e_this_period": "tCO₂e", "site": "Site", "component": "Component"},
+        )
+        fig_site_dis.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10), legend_title_text="Component")
+        st.plotly_chart(fig_site_dis, use_container_width=True, key=f"mon_{pool_name}_site_dis")
+        
+        # Charts by Site - Aggregated
+        site_agg_total = split_df.groupby(["site"], as_index=False)["tco2e_this_period"].sum()
+        site_agg_total["pool"] = f"{pool_name} Total"
+        st.markdown("#### By Site (Aggregated)")
+        fig_site_agg = px.bar(
+            site_agg_total,
+            x="site",
+            y="tco2e_this_period",
+            labels={"tco2e_this_period": "tCO₂e", "site": "Site"},
+        )
+        fig_site_agg.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(fig_site_agg, use_container_width=True, key=f"mon_{pool_name}_site_agg")
+        
+        # Charts by Stratum - Disaggregated
+        stratum_agg = split_df.groupby(["stratum", "component"], as_index=False)["tco2e_this_period"].sum()
+        st.markdown("#### By Stratum (Disaggregated)")
+        fig_stratum_dis = px.bar(
+            stratum_agg,
+            x="stratum",
+            y="tco2e_this_period",
+            color="component",
+            barmode="group",
+            labels={"tco2e_this_period": "tCO₂e", "stratum": "Stratum", "component": "Component"},
+        )
+        fig_stratum_dis.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10), legend_title_text="Component")
+        st.plotly_chart(fig_stratum_dis, use_container_width=True, key=f"mon_{pool_name}_stratum_dis")
+        
+        # Charts by Stratum - Aggregated
+        stratum_agg_total = split_df.groupby(["stratum"], as_index=False)["tco2e_this_period"].sum()
+        stratum_agg_total["pool"] = f"{pool_name} Total"
+        st.markdown("#### By Stratum (Aggregated)")
+        fig_stratum_agg = px.bar(
+            stratum_agg_total,
+            x="stratum",
+            y="tco2e_this_period",
+            labels={"tco2e_this_period": "tCO₂e", "stratum": "Stratum"},
+        )
+        fig_stratum_agg.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(fig_stratum_agg, use_container_width=True, key=f"mon_{pool_name}_stratum_agg")
 
     with tab_agb:
         _render_monitoring_pool_tab("AGB", _split_monitoring_biomass, mon)
@@ -2130,7 +2492,7 @@ def page_downloads(data: Dict[str, object], flt: dict) -> None:
 # ---------- Navigation ----------
 PAGES = {
     "Overview": page_overview,
-    "Trees & Species": page_trees_species,
+    "Trees Planted": page_trees_species,
     "Baseline": page_baseline,
     "Monitoring": page_monitoring_comparison,
     "VCUs": page_vcus,
